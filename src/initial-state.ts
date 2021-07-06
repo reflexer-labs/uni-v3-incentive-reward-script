@@ -1,7 +1,8 @@
 import { fstat } from "node:fs";
 import { config } from "./config";
-import { subgraphQuery, subgraphQueryPaginated } from "./subgraph";
-import { UserList } from "./types";
+import { getStakingWeight } from "./staking-weight";
+import { getPoolState, subgraphQuery, subgraphQueryPaginated } from "./subgraph";
+import { LpPosition, UserList } from "./types";
 import { getExclusionList, getOrCreateUser, getSafeOwnerMapping } from "./utils";
 
 const RAI_ADDRESS = "0x03ab458634910aad20ef5f1c8ee96f1d6ac54919".toLowerCase();
@@ -12,21 +13,18 @@ export const getInitialState = async (startBlock: number, endBlock: number) => {
   const owners = await getSafeOwnerMapping(endBlock);
 
   // Get all LP token balance
-  const balances = await getInitialRaiLpBalances(startBlock, owners);
+  const positions = await getInitialLpPosition(startBlock);
 
-  console.log(`  Fetched ${balances.length} LP token balances`);
   // Get all debts
   const debts = await getInitialSafesDebt(startBlock, owners);
 
   console.log(`  Fetched ${debts.length} debt balances`);
 
-  // Combine debt and LP balances
+  // Add positions
   const users: UserList = {};
-  for (let bal of balances) {
-    const user = getOrCreateUser(bal.address, users);
-    user.lpBalance = bal.lpBalance;
-    user.raiLpBalance = bal.raiLpBalance;
-    users[bal.address] = user;
+  for (let addr of Object.keys(positions)) {
+    const user = getOrCreateUser(addr, users);
+    user.lpPositions = positions[addr].positions;
   }
 
   for (let debt of debts) {
@@ -41,9 +39,11 @@ export const getInitialState = async (startBlock: number, endBlock: number) => {
     delete users[e];
   }
 
+  const poolState = await getPoolState(startBlock, config().UNISWAP_POOL_ADDRESS)
+
   // Set the initial staking weights
   Object.values(users).map((u) => {
-    u.stakingWeight = Math.min(u.debt, u.raiLpBalance);
+    u.stakingWeight = getStakingWeight(u.debt, u.lpPositions, poolState.sqrtPrice);
   });
 
   // Sanity checks
@@ -51,8 +51,7 @@ export const getInitialState = async (startBlock: number, endBlock: number) => {
     if (
       user.debt == undefined ||
       user.earned == undefined ||
-      user.lpBalance == undefined ||
-      user.raiLpBalance == undefined ||
+      user.lpPositions == undefined ||
       user.rewardPerWeightStored == undefined ||
       user.stakingWeight == undefined
     ) {
@@ -90,94 +89,70 @@ const getInitialSafesDebt = async (startBlock: number, ownerMapping: Map<string,
   return debts;
 };
 
-const getInitialRaiLpBalances = async (startBlock: number, ownerMapping: Map<string, string>) => {
-  // We need the pool state to convert LP balance to RAI holdings
-  const { uniRaiReserve, totalLpSupply } = await getPoolState(startBlock);
-
-  const getRaiFromLpBalance = (lpAmount: number) => (lpAmount * uniRaiReserve) / totalLpSupply;
-
-  // Get the LP token balance at start
-  const lpTokenBalancesQuery = `{erc20Balances(where: {tokenAddress: "${
-    config().UNISWAP_POOL_ADDRESS
-  }", balance_gt: 0}, first: 1000, skip: [[skip]], block: {number: ${startBlock}}), { balance, address }}`;
-  const balancesGraph: {
-    balance: string;
-    address: string;
-  }[] = await subgraphQueryPaginated(lpTokenBalancesQuery, "erc20Balances", config().GEB_PERIPHERY_SUBGRAPH_URL);
-
-  const balances = balancesGraph.map((x) => ({
-    address: x.address,
-    lpBalance: Number(x.balance),
-    // RAI LP balance = LP balance * RAI reserve  / total LP supply
-    raiLpBalance: getRaiFromLpBalance(Number(x.balance)),
-  }));
-
-  // Get the savior LP token balances at start
-  const saviorBalanceQuery = `{ saviorBalances(where: {saviorAddress: "${
-    config().UNISWAP_SAVIOR_ADDRESS
-  }", balance_gt: 0},  first: 1000, skip: [[skip]], block: {number: ${startBlock}}) { address, balance } }`;
-  const saviorBalancesGraph: {
-    balance: string;
-    address: string;
-  }[] = await subgraphQueryPaginated(saviorBalanceQuery, "saviorBalances", config().GEB_PERIPHERY_SUBGRAPH_URL);
-
-  // Retrieve real owner of the LP token balance
-  const saviorBalances = saviorBalancesGraph.map((x) => {
-    if (!ownerMapping.has(x.address)) {
-      console.log(`safeHandler without owner ${x.address}`);
-    }
-
-    return { address: ownerMapping.get(x.address), balance: Number(x.balance) };
-  });
-
-  // Add the savior balance to the LP balances
-  for (let saviorBalance of saviorBalances) {
-    const i = balances.findIndex((x) => x.address == saviorBalance.address);
-
-    if (i >= 0) {
-      balances[i].lpBalance += saviorBalance.balance;
-      balances[i].raiLpBalance = getRaiFromLpBalance(balances[i].lpBalance);
-    } else {
-      balances.push({
-        address: saviorBalance.address,
-        lpBalance: saviorBalance.balance,
-        raiLpBalance: getRaiFromLpBalance(saviorBalance.balance),
-      });
-    }
-  }
-
-  console.log(`  Fetched ${saviorBalancesGraph.length} LP savior token balances`);
-
-  return balances;
-};
-
 export const getAccumulatedRate = async (block: number) => {
   return Number(
-    (await subgraphQuery(`{collateralType(id: "ETH-A", block: {number: ${block}}) {accumulatedRate}}`, config().GEB_SUBGRAPH_URL)).collateralType
-      .accumulatedRate
+    (
+      await subgraphQuery(
+        `{collateralType(id: "ETH-A", block: {number: ${block}}) {accumulatedRate}}`,
+        config().GEB_SUBGRAPH_URL
+      )
+    ).collateralType.accumulatedRate
   );
 };
 
-export const getPoolState = async (block: number) => {
-  const poolState = await subgraphQuery(
-    `{uniswapV2Pairs(block: {number: ${block} }, where: {address: "${config().UNISWAP_POOL_ADDRESS}"}) {reserve0,reserve1,totalSupply,token0,token1}}`,
-    config().GEB_PERIPHERY_SUBGRAPH_URL
-  );
+const getInitialLpPosition = async (startBlock: number) => {
+  const query = `{
+    positions(block: {number: ${startBlock}}, where: { pool : "${
+    config().UNISWAP_POOL_ADDRESS
+  }"}, first: 1000, skip: [[skip]]) {
+      id
+      owner
+      liquidity
+      tickLower {
+        tickIdx
+      }
+      tickUpper {
+        tickIdx
+      }
+    }
+  }`;
 
-  let uniRaiReserve: number;
+  const positions: {
+    id: string;
+    owner: string;
+    liquidity: string;
+    tickLower: {
+      tickIdx: string;
+    };
+    tickUpper: {
+      tickIdx: string;
+    };
+  }[] = await subgraphQueryPaginated(query, "positions", config().UNISWAP_SUBGRAPH_URL);
 
-  if (poolState.uniswapV2Pairs[0].token0 === RAI_ADDRESS) {
-    uniRaiReserve = Number(poolState.uniswapV2Pairs[0].reserve0);
-  } else if (poolState.uniswapV2Pairs[0].token1 === RAI_ADDRESS) {
-    uniRaiReserve = Number(poolState.uniswapV2Pairs[0].reserve1);
-  } else {
-    throw Error("Not a RAI pair");
-  }
+  console.log(`  Fetched ${positions.length} LP position`);
 
-  const totalLpSupply = Number(poolState.uniswapV2Pairs[0].totalSupply);
+  let userPositions = positions.reduce((acc, p) => {
+    if (acc[p.owner]) {
+      acc[p.owner].positions.push({
+        lowerTick: parseInt(p.tickLower.tickIdx),
+        upperTick: parseInt(p.tickUpper.tickIdx),
+        liquidity: parseInt(p.liquidity),
+        tokenId: parseInt(p.id),
+      });
+    } else {
+      acc[p.owner] = {
+        positions: [
+          {
+            lowerTick: parseInt(p.tickLower.tickIdx),
+            upperTick: parseInt(p.tickUpper.tickIdx),
+            liquidity: parseInt(p.liquidity),
+            tokenId: parseInt(p.id),
+          },
+        ],
+      };
+    }
+    return acc;
+  }, {} as { [key: string]: { positions: LpPosition[] } });
 
-  return {
-    uniRaiReserve,
-    totalLpSupply,
-  };
+  return userPositions;
 };

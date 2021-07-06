@@ -1,11 +1,10 @@
 // For a single user
 export type UserAccount = {
   debt: number;
-  lpBalance: number;
-  raiLpBalance: number;
+  lpPositions: LpPosition[];
   stakingWeight: number;
   rewardPerWeightStored: number;
-  earned: number
+  earned: number;
 };
 
 // Main data structure
@@ -15,15 +14,22 @@ export type UserList = {
 
 export enum RewardEventType {
   DELTA_DEBT,
-  DELTA_LP,
-  POOL_SYNC,
+  POOL_POSITION_UPDATE,
+  POOL_SWAP,
   UPDATE_ACCUMULATED_RATE,
 }
 
 export type RewardEvent = {
   type: RewardEventType;
   address?: string;
-  value: number;
+  value: number | LpPosition;
   timestamp: number;
   logIndex: number;
+};
+
+export type LpPosition = {
+  tokenId: number;
+  upperTick: number;
+  lowerTick: number;
+  liquidity: number;
 };

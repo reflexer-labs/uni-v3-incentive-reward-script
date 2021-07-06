@@ -1,4 +1,5 @@
 import { zeroPad } from "ethers/lib/utils";
+import { blockToTimestamp } from "./chain";
 import { config } from "./config";
 import { subgraphQueryPaginated } from "./subgraph";
 import { RewardEvent, RewardEventType } from "./types";
@@ -6,13 +7,13 @@ import { getExclusionList, getSafeOwnerMapping, NULL_ADDRESS } from "./utils";
 
 export const getEvents = async (startBlock: number, endBlock: number) => {
   console.log(`Fetch events ...`);
-  
+
   const owners = await getSafeOwnerMapping(endBlock);
 
   const res = await Promise.all([
-    getSafeModificationEvents(startBlock, endBlock,owners),
-    getLpBalanceDelta(startBlock, endBlock, owners),
-    getSyncEvents(startBlock, endBlock),
+    getSafeModificationEvents(startBlock, endBlock, owners),
+    getPoolPositionUpdate(startBlock, endBlock),
+    getPoolSwap(startBlock, endBlock),
     getUpdateAccumulatedRateEvent(startBlock, endBlock),
   ]);
 
@@ -22,9 +23,7 @@ export const getEvents = async (startBlock: number, endBlock: number) => {
   // Filter out events involving the exclusion list
   // Remove accounts from the exclusion list
   const exclusionList = await getExclusionList();
-  events = events.filter(
-    (e) => !e.address || !exclusionList.includes(e.address)
-  );
+  events = events.filter((e) => !e.address || !exclusionList.includes(e.address));
 
   // Sort first by timestamp then by logIndex
   events = events.sort((a, b) => {
@@ -45,18 +44,12 @@ export const getEvents = async (startBlock: number, endBlock: number) => {
 
   // Sanity checks
   for (let e of events) {
-    if (
-      !e ||
-      e.logIndex == undefined ||
-      !e.timestamp ||
-      e.type == undefined ||
-      !e.value == undefined
-    ) {
+    if (!e || e.logIndex == undefined || !e.timestamp || e.type == undefined || !e.value == undefined) {
       throw Error(`Inconsistent event: ${JSON.stringify(e)}`);
     }
 
     if (
-      e.type === RewardEventType.DELTA_LP ||
+      e.type === RewardEventType.POOL_POSITION_UPDATE ||
       // @ts-ignore
       e.type === RewardEventType.DELTA_DEBT
     ) {
@@ -97,12 +90,11 @@ const getSafeModificationEvents = async (
       }
     }`;
 
-  const safeModifications: SubgraphSafeModification[] =
-    await subgraphQueryPaginated(
-      safeModificationQuery,
-      "modifySAFECollateralizations",
-      config().GEB_SUBGRAPH_URL
-    );
+  const safeModifications: SubgraphSafeModification[] = await subgraphQueryPaginated(
+    safeModificationQuery,
+    "modifySAFECollateralizations",
+    config().GEB_SUBGRAPH_URL
+  );
 
   // Event used in liquidation
   const confiscateSAFECollateralAndDebtsQuery = `{
@@ -114,12 +106,11 @@ const getSafeModificationEvents = async (
     }
   }`;
 
-  const confiscateSAFECollateralAndDebts: SubgraphSafeModification[] =
-    await subgraphQueryPaginated(
-      confiscateSAFECollateralAndDebtsQuery,
-      "confiscateSAFECollateralAndDebts",
-      config().GEB_SUBGRAPH_URL
-    );
+  const confiscateSAFECollateralAndDebts: SubgraphSafeModification[] = await subgraphQueryPaginated(
+    confiscateSAFECollateralAndDebtsQuery,
+    "confiscateSAFECollateralAndDebts",
+    config().GEB_SUBGRAPH_URL
+  );
 
   // Event transferring debt, rarely used
   const transferSAFECollateralAndDebtsQuery = `{
@@ -144,8 +135,7 @@ const getSafeModificationEvents = async (
     config().GEB_SUBGRAPH_URL
   );
 
-  const transferSAFECollateralAndDebtsProcessed: SubgraphSafeModification[] =
-    [];
+  const transferSAFECollateralAndDebtsProcessed: SubgraphSafeModification[] = [];
   for (let t of transferSAFECollateralAndDebts) {
     transferSAFECollateralAndDebtsProcessed.push({
       id: t.id,
@@ -189,125 +179,90 @@ const getSafeModificationEvents = async (
   return events;
 };
 
-const getLpBalanceDelta = async (
-  start: number,
-  end: number,
-  ownerMapping: Map<string, string>
-): Promise<RewardEvent[]> => {
+const getPoolPositionUpdate = async (start: number, end: number): Promise<RewardEvent[]> => {
   const query = `{
-        erc20Transfers(where: {createdAtBlock_gte: ${start}, createdAtBlock_lte: ${end}, tokenAddress: "${
+    positionSnapshots(where: {blockNumber_gte: ${start}, blockNumber_lte: ${end}, pool : "${
     config().UNISWAP_POOL_ADDRESS
   }"}, first: 1000, skip: [[skip]]) {
-          id
-          source
-          destination
-          amount
-          createdAt
+      owner
+      timestamp
+      liquidity
+      position {
+        id
+        tickLower {
+          tickIdx
         }
-      }`;
-
-  const data: {
-    id: string;
-    source: string;
-    destination: string;
-    amount: string;
-    createdAt: string;
-  }[] = await subgraphQueryPaginated(
-    query,
-    "erc20Transfers",
-    config().GEB_PERIPHERY_SUBGRAPH_URL
-  );
-
-  console.log(`  Fetched ${data.length} LP token transfers`);
-
-  const events: RewardEvent[] = [];
-
-  // Create 2 balance delta events for each transfer (outgoing & incoming)
-  for (let event of data) {
-    events.push({
-      type: RewardEventType.DELTA_LP,
-      value: -1 * Number(event.amount),
-      address: event.source,
-      logIndex: getLogIndexFromId(event.id),
-      timestamp: Number(event.createdAt),
-    });
-
-    events.push({
-      type: RewardEventType.DELTA_LP,
-      value: Number(event.amount),
-      address: event.destination,
-      logIndex: getLogIndexFromId(event.id),
-      timestamp: Number(event.createdAt),
-    });
-  }
-
-  const saviorBalanceQuery = `{ saviorBalanceChanges(where: {createdAtBlock_gte: ${start}, createdAtBlock_lte: ${end}, saviorAddress: "${
-    config().UNISWAP_SAVIOR_ADDRESS
-  }"},  first: 1000, skip: [[skip]]) { id, address, deltaBalance, createdAt } }`;
-  const saviorBalancesGraph: {
-    id: string;
-    deltaBalance: string;
-    address: string;
-    createdAt: string;
-  }[] = await subgraphQueryPaginated(saviorBalanceQuery, "saviorBalanceChanges", config().GEB_PERIPHERY_SUBGRAPH_URL);
-  
-  for(let event of saviorBalancesGraph) {
-    if(!ownerMapping.has(event.address)) {
-      console.log(`Safe handler ${event.address} has no owner`);
+        tickUpper {
+          tickIdx
+        }
+      }
     }
+  }`;
 
+  const snapshots: {
+    owner: string;
+    timestamp: string;
+    liquidity: string;
+    position: {
+      id: string;
+      tickLower: {
+        tickIdx: string;
+      };
+      tickUpper: {
+        tickIdx: string;
+      };
+    };
+  }[] = await subgraphQueryPaginated(query, "positionSnapshots", config().UNISWAP_SUBGRAPH_URL);
+  let events: RewardEvent[] = [];
+
+  for (let position of snapshots) {
     events.push({
-      type: RewardEventType.DELTA_LP,
-      value: Number(event.deltaBalance),
-      address: ownerMapping.get(event.address),
-      logIndex: getLogIndexFromId(event.id),
-      timestamp: Number(event.createdAt)
-    })
+      type: RewardEventType.POOL_POSITION_UPDATE,
+      value: {
+        tokenId: Number(position.position.id),
+        upperTick: Number(position.position.tickUpper.tickIdx),
+        lowerTick: Number(position.position.tickLower.tickIdx),
+        liquidity: Number(position.liquidity),
+      },
+      address: position.owner,
+      logIndex: 1e6,
+      timestamp: Number(position.timestamp),
+    });
   }
-
-  console.log(`  Fetched ${saviorBalancesGraph.length} savior LP token transfers`);
 
   return events;
 };
 
-const getSyncEvents = async (
-  start: number,
-  end: number
-): Promise<RewardEvent[]> => {
+const getPoolSwap = async (start: number, end: number): Promise<RewardEvent[]> => {
+  const [startTime, endTime] = await Promise.all([blockToTimestamp(start), blockToTimestamp(end)]);
+
   const query = `{
-    uniswapV2Syncs(where: {createdAtBlock_gte: ${start}, createdAtBlock_lte: ${end}, pair: "${
-    config().UNISWAP_POOL_ADDRESS
-  }"}, first: 1000, skip: [[skip]]) {
-                id
-                reserve0
-                createdAt
-            }
-        }`;
+    swaps(where: {pool:"${
+      config().UNISWAP_POOL_ADDRESS
+    }", timestamp_gte: ${startTime}, timestamp_lte: ${endTime}}, first: 1000, skip:[[skip]]){
+      sqrtPriceX96
+      timestamp
+      logIndex
+    }
+  }`;
 
   const data: {
-    id: string;
-    reserve0: string;
-    createdAt: string;
-  }[] = await subgraphQueryPaginated(
-    query,
-    "uniswapV2Syncs",
-    config().GEB_PERIPHERY_SUBGRAPH_URL
-  );
+    sqrtPriceX96: string;
+    timestamp: string;
+    logIndex: string;
+  }[] = await subgraphQueryPaginated(query, "swaps", config().UNISWAP_SUBGRAPH_URL);
 
   const events = data.map((x) => ({
-    type: RewardEventType.POOL_SYNC,
-    value: Number(x.reserve0),
-    logIndex: getLogIndexFromId(x.id),
-    timestamp: Number(x.createdAt),
+    type: RewardEventType.POOL_SWAP,
+    value: Number(x.sqrtPriceX96),
+    logIndex: Number(x.logIndex),
+    timestamp: Number(x.timestamp),
   }));
   console.log(`  Fetched ${events.length} Uniswap syncs events`);
   return events;
 };
 
-const getUpdateAccumulatedRateEvent = async (
-  start: number,
-  end: number
-): Promise<RewardEvent[]> => {
+const getUpdateAccumulatedRateEvent = async (start: number, end: number): Promise<RewardEvent[]> => {
   const query = `{
             updateAccumulatedRates(orderBy: accumulatedRate, orderDirection: desc where: {createdAtBlock_gte: ${start}, createdAtBlock_lte: ${end}}, first: 1000, skip: [[skip]]) {
               id
@@ -320,11 +275,7 @@ const getUpdateAccumulatedRateEvent = async (
     id: string;
     rateMultiplier: string;
     createdAt: string;
-  }[] = await subgraphQueryPaginated(
-    query,
-    "updateAccumulatedRates",
-    config().GEB_SUBGRAPH_URL
-  );
+  }[] = await subgraphQueryPaginated(query, "updateAccumulatedRates", config().GEB_SUBGRAPH_URL);
 
   const events = data.map((x) => ({
     type: RewardEventType.UPDATE_ACCUMULATED_RATE,

@@ -13,10 +13,9 @@ export const getOrCreateUser = (
   if (userList[address]) {
     return userList[address];
   } else {
-    const newUser = {
+    const newUser : UserAccount  = {
       debt: 0,
-      lpBalance: 0,
-      raiLpBalance: 0,
+      lpPositions: [],
       stakingWeight: 0,
       earned: 0,
       rewardPerWeightStored: 0,

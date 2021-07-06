@@ -1,14 +1,13 @@
 import { config } from "./config";
-import { getAccumulatedRate, getPoolState } from "./initial-state";
-import { RewardEvent, RewardEventType, UserAccount, UserList } from "./types";
+import { getAccumulatedRate } from "./initial-state";
+import { LpPosition, RewardEvent, RewardEventType, UserAccount, UserList } from "./types";
 import { getOrCreateUser, NULL_ADDRESS, roundToZero } from "./utils";
 import { provider } from "./chain";
 import { finalSanityChecks, sanityCheckAllUsers } from "./sanity-checks";
+import { getStakingWeight } from "./staking-weight";
+import { getPoolState } from "./subgraph";
 
-export const processRewardEvent = async (
-  users: UserList,
-  events: RewardEvent[]
-): Promise<UserList> => {
+export const processRewardEvent = async (users: UserList, events: RewardEvent[]): Promise<UserList> => {
   // Starting and ending of the campaign
   const startBlock = config().START_BLOCK;
   const endBlock = config().END_BLOCK;
@@ -37,8 +36,8 @@ export const processRewardEvent = async (
   // Ongoing accumulated rate
   let accumulatedRate = await getAccumulatedRate(startBlock);
 
-  // Ongoing RAI reserve and LP total supply, this is needed to convert LP balance to RAI LP Balance
-  let { uniRaiReserve, totalLpSupply } = await getPoolState(startBlock);
+  // Ongoing uni v3 sqrtPrice
+  let sqrtPrice = (await getPoolState(startBlock, config().UNISWAP_POOL_ADDRESS)).sqrtPrice;
 
   // ===== Main processing loop ======
 
@@ -67,48 +66,72 @@ export const processRewardEvent = async (
         earn(user, rewardPerWeight);
 
         // Convert to real debt after interests and update the debt balance
-        const adjustedDeltaDebt = event.value * accumulatedRate;
+        const adjustedDeltaDebt = (event.value as number) * accumulatedRate;
         user.debt += adjustedDeltaDebt;
         break;
       }
-      case RewardEventType.DELTA_LP: {
-        if (event.address === NULL_ADDRESS) {
-          // This is a mint or a burn of LP tokens, update the total supply
-          totalLpSupply += -1 * event.value;
+      case RewardEventType.POOL_POSITION_UPDATE: {
+        const updatedPosition = event.value as LpPosition;
+        const user = getOrCreateUser(event.address, users);
+        earn(user, rewardPerWeight);
 
-          if (totalLpSupply < 0) {
-            throw Error("Negative lp total supply");
+        // Detect the special of a simple NFT transfer (not form a mint/burn/modify position)
+        for (let u of Object.keys(users)) {
+          for (let p in users[u].lpPositions) {
+            if (users[u].lpPositions[p].tokenId === updatedPosition.tokenId && u !== event.address) {
+              console.log("ERC721 transfer");
+              // We found the source address of an ERC721 transfer
+              earn(users[u], rewardPerWeight);
+              users[u].lpPositions = users[u].lpPositions.splice(parseInt(p), 1);
+              users[u].stakingWeight = getStakingWeight(users[u].debt, users[u].lpPositions, sqrtPrice);
+            }
           }
-        } else {
-          // Credit user rewards
-          const user = getOrCreateUser(event.address, users);
-          earn(user, rewardPerWeight);
-
-          user.lpBalance = roundToZero(user.lpBalance + event.value);
-
-          // Convert LP amount to RAI-LP amount
-          user.raiLpBalance = (uniRaiReserve * user.lpBalance) / totalLpSupply;
         }
+
+        // Create or update the position
+        const index = user.lpPositions.findIndex((p) => p.tokenId === updatedPosition.tokenId);
+        if (index === -1) {
+          user.lpPositions.push({
+            tokenId: updatedPosition.tokenId,
+            lowerTick: updatedPosition.lowerTick,
+            upperTick: updatedPosition.upperTick,
+            liquidity: updatedPosition.liquidity,
+          });
+        } else {
+          user.lpPositions[index].liquidity = updatedPosition.liquidity;
+
+          // Sanity check
+          if (
+            user.lpPositions[index].lowerTick !== updatedPosition.lowerTick ||
+            user.lpPositions[index].upperTick !== updatedPosition.upperTick
+          ) {
+            throw Error("Tick value can't be updated");
+          }
+        }
+
+        // Update that user staking weight
+        user.stakingWeight = getStakingWeight(user.debt, user.lpPositions, sqrtPrice);
+
         break;
       }
-      case RewardEventType.POOL_SYNC: {
-        // Pool sync are either swap or LP mint/burn. It's changing the RAI reserve of the pool
-        // We have to recalculate all the staking weights because this will shift the LP-RAI balance
-        uniRaiReserve = event.value;
+      case RewardEventType.POOL_SWAP: {
+        // Pool swap changes the price which affects everyone's staking weight
 
         // First credit all users
         Object.values(users).map((u) => earn(u, rewardPerWeight));
 
-        // Then update everyone's RAI-LP balance according to the new RAI reserve
+        sqrtPrice = event.value as number;
+
+        // Then update everyone weight
         Object.values(users).map(
-          (u) =>
-            (u.raiLpBalance = (u.lpBalance * uniRaiReserve) / totalLpSupply)
+          (u) => (u.stakingWeight = getStakingWeight(u.debt, u.lpPositions, sqrtPrice))
         );
+
         break;
       }
       case RewardEventType.UPDATE_ACCUMULATED_RATE: {
         // Update accumulated rate increases everyone's debt by the rate multiplier
-        const rateMultiplier = event.value;
+        const rateMultiplier = event.value as number;
         accumulatedRate += rateMultiplier;
 
         // First credit all users
@@ -116,6 +139,10 @@ export const processRewardEvent = async (
 
         // Update everyone's debt
         Object.values(users).map((u) => (u.debt *= rateMultiplier + 1));
+
+        Object.values(users).map(
+          (u) => (u.stakingWeight = getStakingWeight(u.debt, u.lpPositions, sqrtPrice))
+        );
         break;
       }
       default:
@@ -124,10 +151,7 @@ export const processRewardEvent = async (
 
     sanityCheckAllUsers(users, event);
 
-    // Recalculate the sum of weights since the events changed the totalSupply of weights
-    Object.values(users).map(
-      (u) => (u.stakingWeight = Math.min(u.debt, u.raiLpBalance))
-    );
+    // Recalculate the sum of weights since the events the weights
     totalStakingWeight = sumAllWeights(users);
 
     if (totalStakingWeight === 0) {
@@ -140,14 +164,7 @@ export const processRewardEvent = async (
   Object.values(users).map((u) => earn(u, rewardPerWeight));
 
   // Sanity check
-  finalSanityChecks(
-    timestamp,
-    accumulatedRate,
-    totalLpSupply,
-    uniRaiReserve,
-    users,
-    endBlock
-  );
+  // finalSanityChecks(timestamp, accumulatedRate, totalLpSupply, uniRaiReserve, users, endBlock);
 
   return users;
 };
@@ -155,8 +172,7 @@ export const processRewardEvent = async (
 // Credit reward to a user
 const earn = (user: UserAccount, rewardPerWeight: number) => {
   // Credit to the user his due rewards
-  user.earned +=
-    (rewardPerWeight - user.rewardPerWeightStored) * user.stakingWeight;
+  user.earned += (rewardPerWeight - user.rewardPerWeightStored) * user.stakingWeight;
 
   // Store his cumulative credited rewards for next time
   user.rewardPerWeightStored = rewardPerWeight;

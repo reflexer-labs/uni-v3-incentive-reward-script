@@ -1,4 +1,5 @@
 import Axios from "axios";
+import { config } from "./config";
 
 export const subgraphQueryPaginated = async (
   query: string,
@@ -43,4 +44,20 @@ export const subgraphQuery = async (
   }
 
   return resp.data.data;
+};
+
+export const getPoolState = async (block: number, pool: string) => {
+  const query = `{
+    pool(id: "${pool}"){
+      sqrtPrice
+    }
+  }`;
+
+  const resp: {
+    pool: {
+      sqrtPrice: number;
+    };
+  } = await subgraphQuery(query, config().UNISWAP_SUBGRAPH_URL);
+
+  return resp.pool
 };
