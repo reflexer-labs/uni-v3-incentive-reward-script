@@ -4,18 +4,18 @@ const RAI_IS_TOKEN_0 = true;
 
 export const getStakingWeight = (debt: number, positions: LpPosition[], sqrtPrice: number): number => {
   const totalLiquidity = positions.reduce((acc, p) => acc + (isInRange(p, sqrtPrice) ? p.liquidity : 0), 0);
-  const totalRaiLp = positions.reduce((acc, p) => acc + getRaiFromLp(p, sqrtPrice), 0);
+  const totalRaiLp = positions.reduce((acc, p) => acc + getActiveRaiFromLp(p, sqrtPrice), 0);
 
   // Discount your liquidity if you haven't minted the full amount
   if (debt >= totalRaiLp) {
     return totalLiquidity;
   } else {
-    return (debt / totalLiquidity) * totalLiquidity;
+    return (debt / totalRaiLp) * totalLiquidity;
   }
 };
 
-export const getRaiFromLp = (lp: LpPosition, sqrtPrice: number) =>
-  getTokenAmountsFromLp(lp, sqrtPrice)[RAI_IS_TOKEN_0 ? 0 : 1];
+export const getActiveRaiFromLp = (lp: LpPosition, sqrtPrice: number) =>
+  isInRange(lp, sqrtPrice) ? getTokenAmountsFromLp(lp, sqrtPrice)[RAI_IS_TOKEN_0 ? 0 : 1] : 0;
 
 // == Uniswap v3 math wizardry ==
 export const getTokenAmountsFromLp = (lp: LpPosition, sqrtPrice: number) => {
