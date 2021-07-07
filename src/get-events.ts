@@ -230,6 +230,8 @@ const getPoolPositionUpdate = async (start: number, end: number): Promise<Reward
     });
   }
 
+  console.log(`  Fetched ${events.length} position update events`);
+
   return events;
 };
 
@@ -258,7 +260,7 @@ const getPoolSwap = async (start: number, end: number): Promise<RewardEvent[]> =
     logIndex: Number(x.logIndex),
     timestamp: Number(x.timestamp),
   }));
-  console.log(`  Fetched ${events.length} Uniswap syncs events`);
+  console.log(`  Fetched ${events.length} Uniswap swap events`);
   return events;
 };
 

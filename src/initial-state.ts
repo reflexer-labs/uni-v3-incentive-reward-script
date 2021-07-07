@@ -5,8 +5,6 @@ import { getPoolState, subgraphQuery, subgraphQueryPaginated } from "./subgraph"
 import { LpPosition, UserList } from "./types";
 import { getExclusionList, getOrCreateUser, getSafeOwnerMapping } from "./utils";
 
-const RAI_ADDRESS = "0x03ab458634910aad20ef5f1c8ee96f1d6ac54919".toLowerCase();
-
 export const getInitialState = async (startBlock: number, endBlock: number) => {
   console.log("Fetch initial state...");
 

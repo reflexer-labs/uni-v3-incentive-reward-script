@@ -5,296 +5,540 @@ import { ImportMock } from "ts-mock-imports";
 import { processRewardEvent } from "../rewards";
 import { RewardEvent, RewardEventType, UserList } from "../types";
 import * as Config from "../config";
+import * as Subgraph from "../subgraph";
 import * as InitialState from "../initial-state";
 import * as Chain from "../chain";
-import { getRaiAmountFromLp } from "../staking-weight";
+import { getStakingWeight, getTokenAmountsFromLp } from "../staking-weight";
 
 describe("processRewardEvent", async () => {
-  // const configStub = ImportMock.mockFunction(Config, "config", {
-  //   GEB_SUBGRAPH_URL: "",
-  //   RPC_URL: "",
-  //   START_BLOCK: 5,
-  //   END_BLOCK: 15,
-  //   REWARD_AMOUNT: 10,
-  // });
+  const configStub = ImportMock.mockFunction(Config, "config", {
+    GEB_SUBGRAPH_URL: "",
+    RPC_URL: "",
+    START_BLOCK: 5,
+    END_BLOCK: 15,
+    REWARD_AMOUNT: 10,
+  });
 
-  // ImportMock.mockOther(InitialState, "getAccumulatedRate", async (b) => 1);
-  // ImportMock.mockOther(InitialState, "getPoolState", async (b) => ({
-  //   uniRaiReserve: 100,
-  //   totalLpSupply: 20,
-  // }));
+  ImportMock.mockOther(InitialState, "getAccumulatedRate", async (b) => 1);
+  ImportMock.mockOther(Subgraph, "getPoolState", async (b) => ({
+    sqrtPrice: 8.123373146178294e28, // Tick 500
+  }));
 
-  // ImportMock.mockOther(Chain, "provider", {
-  //   // @ts-ignore
-  //   getBlock: async (b) => ({
-  //     timestamp: b,
-  //   }),
-  // });
+  ImportMock.mockOther(Chain, "provider", {
+    // @ts-ignore
+    getBlock: async (b) => ({
+      timestamp: b,
+    }),
+  });
 
-  // it("Constant distribution with 2 users", async () => {
-  //   let users: UserList = {
-  //     Alice: {
-  //       debt: 10,
-  //       lpBalance: 10,
-  //       raiLpBalance: 10,
-  //       stakingWeight: 10,
-  //       rewardPerWeightStored: 0,
-  //       earned: 0,
-  //     },
-  //     Bob: {
-  //       debt: 30,
-  //       lpBalance: 30,
-  //       raiLpBalance: 30,
-  //       stakingWeight: 30,
-  //       rewardPerWeightStored: 0,
-  //       earned: 0,
-  //     },
-  //   };
+  it("Constant distribution with 2 users", async () => {
+    let users: UserList = {
+      Alice: {
+        debt: 10,
+        lpPositions: [
+          {
+            tokenId: 1,
+            lowerTick: 0,
+            upperTick: 1000,
+            liquidity: 1e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+      Bob: {
+        debt: 30,
+        lpPositions: [
+          {
+            tokenId: 2,
+            lowerTick: 0,
+            upperTick: 1000,
+            liquidity: 3e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+    };
 
-  //   const events: RewardEvent[] = [];
+    users["Alice"].stakingWeight = getStakingWeight(
+      users["Alice"].debt,
+      users["Alice"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
+    users["Bob"].stakingWeight = getStakingWeight(
+      users["Bob"].debt,
+      users["Bob"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
 
-  //   users = await processRewardEvent(users, events);
-  //   expect(Object.values(users).length).equal(2);
-  //   expect(users["Alice"].earned).equal(2.5);
-  //   expect(users["Bob"].earned).equal(7.5);
-  //   expect(users["Alice"].stakingWeight).equal(10);
-  //   expect(users["Bob"].stakingWeight).equal(30);
-  // });
+    const events: RewardEvent[] = [];
 
-  // it("Add/remove/add debt alone with high prior LP", async () => {
-  //   let users: UserList = {
-  //     Alice: {
-  //       debt: 0,
-  //       lpBalance: 15,
-  //       raiLpBalance: (15 * 100) / 15,
-  //       stakingWeight: 0,
-  //       rewardPerWeightStored: 0,
-  //       earned: 0,
-  //     },
-  //   };
+    users = await processRewardEvent(users, events);
+    expect(Object.values(users).length).equal(2);
+    expect(users["Alice"].earned).approximately(2.5, 0.00001);
+    expect(users["Bob"].earned).approximately(7.5, 0.00001);
+    expect(users["Alice"].stakingWeight * 3).approximately(users["Bob"].stakingWeight, 0.00001);
+  });
 
-  //   const events: RewardEvent[] = [
-  //     {
-  //       type: RewardEventType.DELTA_DEBT,
-  //       address: "Bob",
-  //       value: 10,
-  //       timestamp: 6,
-  //       logIndex: 0,
-  //     },
-  //     {
-  //       type: RewardEventType.DELTA_DEBT,
-  //       address: "Alice",
-  //       value: 10,
-  //       timestamp: 8,
-  //       logIndex: 0,
-  //     },
-  //     {
-  //       type: RewardEventType.DELTA_DEBT,
-  //       address: "Alice",
-  //       value: -10,
-  //       timestamp: 10,
-  //       logIndex: 0,
-  //     },
-  //     {
-  //       type: RewardEventType.DELTA_DEBT,
-  //       address: "Alice",
-  //       value: 10,
-  //       timestamp: 12,
-  //       logIndex: 0,
-  //     },
-  //   ];
+  it("Remove debt affects rewards", async () => {
+    let users: UserList = {
+      Alice: {
+        debt: 10,
+        lpPositions: [
+          {
+            tokenId: 1,
+            lowerTick: 0,
+            upperTick: 1000,
+            liquidity: 1e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+    };
 
-  //   users = await processRewardEvent(users, events);
-  //   expect(Object.values(users).length).equal(2);
-  //   expect(users["Alice"].stakingWeight).equal(10);
-  //   expect(users["Bob"].stakingWeight).equal(0);
-  //   expect(users["Alice"].earned).equal(5);
-  //   expect(users["Bob"].earned).equal(0);
-  // });
+    users["Alice"].stakingWeight = getStakingWeight(
+      users["Alice"].debt,
+      users["Alice"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
 
-  // it("Add/remove/add debt while bob is there", async () => {
-  //   let users: UserList = {
-  //     Alice: {
-  //       debt: 0,
-  //       lpBalance: 10,
-  //       raiLpBalance: 10,
-  //       stakingWeight: 0,
-  //       rewardPerWeightStored: 0,
-  //       earned: 0,
-  //     },
-  //     Bob: {
-  //       debt: 10,
-  //       lpBalance: 10,
-  //       raiLpBalance: 10,
-  //       stakingWeight: 10,
-  //       rewardPerWeightStored: 0,
-  //       earned: 0,
-  //     },
-  //   };
+    const events: RewardEvent[] = [
+      {
+        type: RewardEventType.DELTA_DEBT,
+        address: "Alice",
+        value: -10,
+        timestamp: 10,
+        logIndex: 0,
+      },
+    ];
 
-  //   const events: RewardEvent[] = [
-  //     {
-  //       type: RewardEventType.DELTA_DEBT,
-  //       address: "Alice",
-  //       value: 10,
-  //       timestamp: 8,
-  //       logIndex: 0,
-  //     },
-  //     {
-  //       type: RewardEventType.DELTA_DEBT,
-  //       address: "Alice",
-  //       value: -10,
-  //       timestamp: 10,
-  //       logIndex: 0,
-  //     },
-  //     {
-  //       type: RewardEventType.DELTA_DEBT,
-  //       address: "Alice",
-  //       value: 10,
-  //       timestamp: 12,
-  //       logIndex: 0,
-  //     },
-  //   ];
+    expect(users["Alice"].stakingWeight).greaterThan(0);
 
-  //   users = await processRewardEvent(users, events);
-  //   expect(Object.values(users).length).equal(2);
-  //   expect(users["Alice"].stakingWeight).equal(10);
-  //   expect(users["Bob"].stakingWeight).equal(10);
-  //   expect(users["Alice"].earned).closeTo(2.5, 0.00001);
-  //   expect(users["Bob"].earned).closeTo(7.5, 0.00001);
-  // });
+    users = await processRewardEvent(users, events);
 
-  // it("Add/remove/add lp while bob is there", async () => {
-  //   let users: UserList = {
-  //     Alice: {
-  //       debt: 0,
-  //       lpBalance: 10,
-  //       raiLpBalance: 10,
-  //       stakingWeight: 0,
-  //       rewardPerWeightStored: 0,
-  //       earned: 0,
-  //     },
-  //     Bob: {
-  //       debt: 10,
-  //       lpBalance: 10,
-  //       raiLpBalance: 10,
-  //       stakingWeight: 10,
-  //       rewardPerWeightStored: 0,
-  //       earned: 0,
-  //     },
-  //   };
+    expect(Object.values(users).length).equal(1);
+    expect(users["Alice"].debt).equal(0);
+    expect(users["Alice"].stakingWeight).equal(0);
+    expect(users["Alice"].earned).equal(5);
+  });
 
-  //   const events: RewardEvent[] = [
-  //     {
-  //       type: RewardEventType.DELTA_DEBT,
-  //       address: "Alice",
-  //       value: 10,
-  //       timestamp: 8,
-  //       logIndex: 0,
-  //     },
-  //     {
-  //       type: RewardEventType.DELTA_LP,
-  //       address: "Alice",
-  //       value: -10,
-  //       timestamp: 10,
-  //       logIndex: 0,
-  //     },
-  //     {
-  //       type: RewardEventType.DELTA_LP,
-  //       address: "Alice",
-  //       value: 10,
-  //       timestamp: 12,
-  //       logIndex: 0,
-  //     },
-  //   ];
+  it("A User outside of price range ", async () => {
+    let users: UserList = {
+      Alice: {
+        debt: 10,
+        lpPositions: [
+          {
+            tokenId: 1,
+            lowerTick: 1000,
+            upperTick: 2000,
+            liquidity: 1e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+      Bob: {
+        debt: 10,
+        lpPositions: [
+          {
+            tokenId: 2,
+            lowerTick: 0,
+            upperTick: 1000,
+            liquidity: 1e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+    };
 
-  //   users = await processRewardEvent(users, events);
-  //   expect(Object.values(users).length).equal(2);
-  //   expect(users["Alice"].stakingWeight).equal(10);
-  //   expect(users["Bob"].stakingWeight).equal(10);
-  //   expect(users["Alice"].earned).closeTo(2.5, 0.00001);
-  //   expect(users["Bob"].earned).closeTo(7.5, 0.00001);
-  // });
+    users["Alice"].stakingWeight = getStakingWeight(
+      users["Alice"].debt,
+      users["Alice"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
+    users["Bob"].stakingWeight = getStakingWeight(
+      users["Bob"].debt,
+      users["Bob"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
 
-  // it("A big price move affects rewards", async () => {
-  //   let users: UserList = {
-  //     Alice: {
-  //       debt: 10,
-  //       lpBalance: 10,
-  //       raiLpBalance: 10,
-  //       stakingWeight: 10,
-  //       rewardPerWeightStored: 0,
-  //       earned: 0,
-  //     },
-  //     Bob: {
-  //       debt: 10,
-  //       lpBalance: 10,
-  //       raiLpBalance: 10,
-  //       stakingWeight: 10,
-  //       rewardPerWeightStored: 0,
-  //       earned: 0,
-  //     },
-  //   };
+    expect(users["Alice"].stakingWeight).equal(0);
+    expect(users["Bob"].stakingWeight).greaterThan(0);
 
-  //   const events: RewardEvent[] = [
-  //     // RAI uni reserve falls from 100 to 10
-  //     {
-  //       type: RewardEventType.POOL_SYNC,
-  //       value: 10,
-  //       timestamp: 10,
-  //       logIndex: 0,
-  //     },
-  //   ];
+    const events: RewardEvent[] = [];
 
-  //   users = await processRewardEvent(users, events);
-  //   expect(Object.values(users).length).equal(2);
-  //   expect(users["Alice"].earned).equal(5);
-  //   expect(users["Bob"].earned).equal(5);
-  //   expect(users["Alice"].stakingWeight).equal(5);
-  //   expect(users["Bob"].stakingWeight).equal(5);
-  // });
+    users = await processRewardEvent(users, events);
+    expect(Object.values(users).length).equal(2);
+    expect(users["Alice"].earned).approximately(0, 0.00001);
+    expect(users["Bob"].earned).approximately(10, 0.00001);
+  });
 
-  // it("Update accumulated rate increases everyone's debt", async () => {
-  //   let users: UserList = {
-  //     Alice: {
-  //       debt: 10,
-  //       lpBalance: 11,
-  //       raiLpBalance: 11,
-  //       stakingWeight: 10,
-  //       rewardPerWeightStored: 0,
-  //       earned: 0,
-  //     },
-  //     Bob: {
-  //       debt: 10,
-  //       lpBalance: 11,
-  //       raiLpBalance: 11,
-  //       stakingWeight: 10,
-  //       rewardPerWeightStored: 0,
-  //       earned: 0,
-  //     },
-  //   };
+  it("Price move across LP positions", async () => {
+    let users: UserList = {
+      Alice: {
+        debt: 10,
+        lpPositions: [
+          {
+            tokenId: 1,
+            lowerTick: 1000,
+            upperTick: 2000,
+            liquidity: 1e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+      Bob: {
+        debt: 10,
+        lpPositions: [
+          {
+            tokenId: 2,
+            lowerTick: 0,
+            upperTick: 1000,
+            liquidity: 1e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+    };
 
-  //   const events: RewardEvent[] = [
-  //     {
-  //       type: RewardEventType.UPDATE_ACCUMULATED_RATE,
-  //       value: 0.1,
-  //       timestamp: 10,
-  //       logIndex: 0,
-  //     },
-  //   ];
+    users["Alice"].stakingWeight = getStakingWeight(
+      users["Alice"].debt,
+      users["Alice"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
+    users["Bob"].stakingWeight = getStakingWeight(
+      users["Bob"].debt,
+      users["Bob"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
 
-  //   users = await processRewardEvent(users, events);
-  //   expect(Object.values(users).length).equal(2);
-  //   expect(users["Alice"].earned).equal(5);
-  //   expect(users["Bob"].earned).equal(5);
-  //   expect(users["Alice"].stakingWeight).equal(11);
-  //   expect(users["Bob"].stakingWeight).equal(11);
-  //   expect(users["Alice"].debt).equal(11);
-  //   expect(users["Bob"].debt).equal(11);
-  // });
+    expect(users["Alice"].stakingWeight).equals(0);
+    expect(users["Bob"].stakingWeight).greaterThan(0);
+
+    const events: RewardEvent[] = [
+      // Price move by 1000 ticks
+      {
+        type: RewardEventType.POOL_SWAP,
+        value: 8.539846045435763e28, // Tick 1500
+        timestamp: 10,
+        logIndex: 0,
+      },
+    ];
+
+    users = await processRewardEvent(users, events);
+    expect(Object.values(users).length).equal(2);
+    expect(users["Alice"].earned).approximately(5, 0.00001);
+    expect(users["Bob"].earned).approximately(5, 0.00001);
+    expect(users["Alice"].stakingWeight).greaterThan(0);
+    expect(users["Bob"].stakingWeight).equals(0);
+  });
+
+  it("A User add lp position ", async () => {
+    let users: UserList = {
+      Alice: {
+        debt: 10,
+        lpPositions: [
+          {
+            tokenId: 1,
+            lowerTick: 0,
+            upperTick: 1000,
+            liquidity: 1e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+      Bob: {
+        debt: 10,
+        lpPositions: [
+          {
+            tokenId: 2,
+            lowerTick: 0,
+            upperTick: 1000,
+            liquidity: 1e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+    };
+
+    users["Alice"].stakingWeight = getStakingWeight(
+      users["Alice"].debt,
+      users["Alice"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
+    users["Bob"].stakingWeight = getStakingWeight(
+      users["Bob"].debt,
+      users["Bob"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
+
+    expect(users["Alice"].stakingWeight).greaterThan(0);
+    expect(users["Bob"].stakingWeight).greaterThan(0);
+    expect(users["Bob"].stakingWeight).equals(users["Alice"].stakingWeight);
+
+    const events: RewardEvent[] = [
+      {
+        type: RewardEventType.POOL_POSITION_UPDATE,
+        value: {
+          tokenId: 3,
+          lowerTick: 0,
+          upperTick: 1000,
+          liquidity: 1e6,
+        },
+        address: "Alice",
+        timestamp: 10,
+        logIndex: 0,
+      },
+    ];
+
+    users = await processRewardEvent(users, events);
+    expect(Object.values(users).length).equal(2);
+    expect(users["Alice"].lpPositions.length).equal(2);
+    expect(users["Alice"].stakingWeight).greaterThan(0);
+    expect(users["Bob"].stakingWeight).greaterThan(0);
+    expect(users["Bob"].stakingWeight * 2).equals(users["Alice"].stakingWeight);
+    expect(users["Alice"].earned).approximately(5.833333333333332, 0.00001);
+    expect(users["Bob"].earned).approximately(4.166666666666666, 0.00001);
+  });
+
+  it("A User remove lp position ", async () => {
+    let users: UserList = {
+      Alice: {
+        debt: 10,
+        lpPositions: [
+          {
+            tokenId: 1,
+            lowerTick: 0,
+            upperTick: 1000,
+            liquidity: 1e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+      Bob: {
+        debt: 10,
+        lpPositions: [
+          {
+            tokenId: 2,
+            lowerTick: 0,
+            upperTick: 1000,
+            liquidity: 1e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+    };
+
+    users["Alice"].stakingWeight = getStakingWeight(
+      users["Alice"].debt,
+      users["Alice"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
+    users["Bob"].stakingWeight = getStakingWeight(
+      users["Bob"].debt,
+      users["Bob"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
+
+    expect(users["Alice"].stakingWeight).greaterThan(0);
+    expect(users["Bob"].stakingWeight).greaterThan(0);
+    expect(users["Bob"].stakingWeight).equals(users["Alice"].stakingWeight);
+
+    const events: RewardEvent[] = [
+      {
+        type: RewardEventType.POOL_POSITION_UPDATE,
+        value: {
+          tokenId: 1,
+          lowerTick: 0,
+          upperTick: 1000,
+          liquidity: 0,
+        },
+        address: "Alice",
+        timestamp: 10,
+        logIndex: 0,
+      },
+    ];
+
+    users = await processRewardEvent(users, events);
+    expect(Object.values(users).length).equal(2);
+    expect(users["Alice"].lpPositions.length).equal(1);
+    expect(users["Alice"].stakingWeight).equal(0);
+    expect(users["Bob"].stakingWeight).greaterThan(0);
+    expect(users["Alice"].earned).approximately(2.5, 0.00001);
+    expect(users["Bob"].earned).approximately(7.5, 0.00001);
+  });
+
+  it("A User transfers lp position ", async () => {
+    let users: UserList = {
+      Alice: {
+        debt: 10,
+        lpPositions: [
+          {
+            tokenId: 1,
+            lowerTick: 0,
+            upperTick: 1000,
+            liquidity: 1e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+      Bob: {
+        debt: 10,
+        lpPositions: [
+          {
+            tokenId: 2,
+            lowerTick: 0,
+            upperTick: 1000,
+            liquidity: 1e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+    };
+
+    users["Alice"].stakingWeight = getStakingWeight(
+      users["Alice"].debt,
+      users["Alice"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
+    users["Bob"].stakingWeight = getStakingWeight(
+      users["Bob"].debt,
+      users["Bob"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
+
+    expect(users["Alice"].stakingWeight).greaterThan(0);
+    expect(users["Bob"].stakingWeight).greaterThan(0);
+    expect(users["Bob"].stakingWeight).equals(users["Alice"].stakingWeight);
+
+    const events: RewardEvent[] = [
+      {
+        type: RewardEventType.POOL_POSITION_UPDATE,
+        value: {
+          tokenId: 1,
+          lowerTick: 0,
+          upperTick: 1000,
+          liquidity: 1e6,
+        },
+        address: "Bob",
+        timestamp: 10,
+        logIndex: 0,
+      },
+    ];
+
+    users = await processRewardEvent(users, events);
+    expect(Object.values(users).length).equal(2);
+    expect(users["Bob"].lpPositions.length).equal(2);
+    expect(users["Alice"].lpPositions.length).equal(0);
+    expect(users["Alice"].stakingWeight).equal(0);
+    expect(users["Bob"].stakingWeight).greaterThan(0);
+    expect(users["Alice"].earned).approximately(2.5, 0.00001);
+    expect(users["Bob"].earned).approximately(7.5, 0.00001);
+  });
+
+  it("Change in accumulated rate reduce rewards", async () => {
+    let users: UserList = {
+      Alice: {
+        debt: 10,
+        lpPositions: [
+          {
+            tokenId: 1,
+            lowerTick: 0,
+            upperTick: 1000,
+            liquidity: 1e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+      Bob: {
+        debt: 10,
+        lpPositions: [
+          {
+            tokenId: 2,
+            lowerTick: 0,
+            upperTick: 1000,
+            liquidity: 1e6,
+          },
+        ],
+        stakingWeight: 0,
+        rewardPerWeightStored: 0,
+        earned: 0,
+      },
+    };
+
+    users["Alice"].stakingWeight = getStakingWeight(
+      users["Alice"].debt,
+      users["Alice"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
+    users["Bob"].stakingWeight = getStakingWeight(
+      users["Bob"].debt,
+      users["Bob"].lpPositions,
+      (await Subgraph.getPoolState(0, "")).sqrtPrice
+    );
+
+    expect(users["Alice"].stakingWeight).greaterThan(0);
+    expect(users["Bob"].stakingWeight).greaterThan(0);
+    expect(users["Bob"].stakingWeight).equals(users["Alice"].stakingWeight);
+
+    const events: RewardEvent[] = [
+      {
+        type: RewardEventType.UPDATE_ACCUMULATED_RATE,
+        value: -0.1,
+        timestamp: 10,
+        logIndex: 0,
+      },
+      {
+        type: RewardEventType.UPDATE_ACCUMULATED_RATE,
+        value: -0.1,
+        timestamp: 10,
+        logIndex: 1,
+      },
+      {
+        type: RewardEventType.UPDATE_ACCUMULATED_RATE,
+        value: -0.1,
+        timestamp: 10,
+        logIndex: 2,
+      },
+    ];
+
+    users = await processRewardEvent(users, events);
+    expect(Object.values(users).length).equal(2);
+    expect(users["Alice"].debt).equal(7.29);
+    expect(users["Bob"].debt).equal(7.29);
+    expect(users["Alice"].earned).greaterThan(0);
+    expect(users["Bob"].earned).greaterThan(0);
+    expect(users["Bob"].earned).equal(users["Alice"].earned);
+  });
 
   it("Uniswap v3 math in price range", () => {
-    const tokensAmt = getRaiAmountFromLp(
+    const tokensAmt = getTokenAmountsFromLp(
       {
         liquidity: 6669887711769083335609,
         lowerTick: -68280,
@@ -308,7 +552,7 @@ describe("processRewardEvent", async () => {
   });
 
   it("Uniswap v3 math above price range", () => {
-    const tokensAmt = getRaiAmountFromLp(
+    const tokensAmt = getTokenAmountsFromLp(
       {
         liquidity: 707857153197436338506,
         lowerTick: -68760,
@@ -322,7 +566,7 @@ describe("processRewardEvent", async () => {
   });
 
   it("Uniswap v3 math below price range", () => {
-    const tokensAmt = getRaiAmountFromLp(
+    const tokensAmt = getTokenAmountsFromLp(
       {
         liquidity: 7911135800609390384613,
         lowerTick: -50,

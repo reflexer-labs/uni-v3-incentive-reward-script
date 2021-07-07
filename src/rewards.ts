@@ -48,12 +48,12 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
   );
   console.log("Applying all events...");
   // Main processing loop processing events in chronologic order that modify the current reward rate distribution for each user.
+
   for (let i = 0; i < events.length; i++) {
     const event = events[i];
 
     if (i % 1000 === 0 && i > 0) console.log(`  Processed ${i} events`);
 
-    // Update the cumulative reward per weight
     updateRewardPerWeight(event.timestamp);
 
     // Increment time
@@ -68,6 +68,13 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
         // Convert to real debt after interests and update the debt balance
         const adjustedDeltaDebt = (event.value as number) * accumulatedRate;
         user.debt += adjustedDeltaDebt;
+
+        // Ignore Dusty debt 
+        if(user.debt < 0 && user.debt > -0.0001) {
+          user.debt = 0
+        }
+
+        user.stakingWeight = getStakingWeight(user.debt, user.lpPositions, sqrtPrice);
         break;
       }
       case RewardEventType.POOL_POSITION_UPDATE: {
@@ -82,12 +89,11 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
               console.log("ERC721 transfer");
               // We found the source address of an ERC721 transfer
               earn(users[u], rewardPerWeight);
-              users[u].lpPositions = users[u].lpPositions.splice(parseInt(p), 1);
+              users[u].lpPositions = users[u].lpPositions.filter(x => x.tokenId !== updatedPosition.tokenId);
               users[u].stakingWeight = getStakingWeight(users[u].debt, users[u].lpPositions, sqrtPrice);
             }
           }
         }
-
         // Create or update the position
         const index = user.lpPositions.findIndex((p) => p.tokenId === updatedPosition.tokenId);
         if (index === -1) {
