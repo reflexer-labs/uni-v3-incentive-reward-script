@@ -1,9 +1,9 @@
 import { config } from "./config";
 import { getAccumulatedRate } from "./initial-state";
 import { LpPosition, RewardEvent, RewardEventType, UserAccount, UserList } from "./types";
-import { getOrCreateUser, NULL_ADDRESS, roundToZero } from "./utils";
+import { getOrCreateUser } from "./utils";
 import { provider } from "./chain";
-import { finalSanityChecks, sanityCheckAllUsers } from "./sanity-checks";
+import { sanityCheckAllUsers } from "./sanity-checks";
 import { getStakingWeight } from "./staking-weight";
 import { getPoolState } from "./subgraph";
 
@@ -70,7 +70,7 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
         user.debt += adjustedDeltaDebt;
 
         // Ignore Dusty debt 
-        if(user.debt < 0 && user.debt > -0.0001) {
+        if(user.debt < 0 && user.debt > -0.02) {
           user.debt = 0
         }
 
@@ -168,9 +168,6 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
   // Final crediting of all rewards
   updateRewardPerWeight(endTimestamp);
   Object.values(users).map((u) => earn(u, rewardPerWeight));
-
-  // Sanity check
-  // finalSanityChecks(timestamp, accumulatedRate, totalLpSupply, uniRaiReserve, users, endBlock);
 
   return users;
 };
