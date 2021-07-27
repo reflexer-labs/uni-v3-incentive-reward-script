@@ -3,6 +3,7 @@ import { subgraphQueryPaginated } from "./subgraph";
 
 import * as fs from "fs";
 import { config } from "./config";
+import { getInstadappOwnerMapping } from "./bigquery";
 
 export const NULL_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -76,10 +77,17 @@ export const getSafeOwnerMapping = async (block: number) => {
     config().GEB_SUBGRAPH_URL
   );
 
-  console.log(`  Fetched ${res.length} safe owners`);
-  for (let a of res) {
-    owners.set(a.id, a.owner.address);
-  }
+  const instaAccounts = await getInstadappOwnerMapping();
 
+  console.log(`  Fetched ${instaAccounts.size} Instadapp accounts`);
+
+  for (let a of res) {
+    if (instaAccounts.has(a.owner.address)) {
+      // It's an Instadapp account use its owner
+      owners.set(a.id, instaAccounts.get(a.owner.address));
+    } else {
+      owners.set(a.id, a.owner.address);
+    }
+  }
   return owners;
 };

@@ -5,10 +5,8 @@ import { getPoolState, subgraphQuery, subgraphQueryPaginated } from "./subgraph"
 import { LpPosition, UserList } from "./types";
 import { getExclusionList, getOrCreateUser, getSafeOwnerMapping } from "./utils";
 
-export const getInitialState = async (startBlock: number, endBlock: number) => {
+export const getInitialState = async (startBlock: number, endBlock: number,  owners: Map<string, string>) => {
   console.log("Fetch initial state...");
-
-  const owners = await getSafeOwnerMapping(endBlock);
 
   // Get all LP token balance
   const positions = await getInitialLpPosition(startBlock);

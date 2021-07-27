@@ -17,6 +17,8 @@ END_BLOCK=11978942
 REWARD_AMOUNT=100
 # Ethereum RPC
 RPC_URL=https://mainnet.infura.io/v3/<KEY>
+# Google BigQuery service account key
+GOOGLE_APPLICATION_CREDENTIALS=...
 ```
 
 Run:
