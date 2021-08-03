@@ -44,7 +44,7 @@ const isInRange = (lp: LpPosition, sqrtPrice) => {
   return tick >= lp.lowerTick && tick <= lp.upperTick;
 };
 
-const sqrtPriceToTick = (sqrtPrice) => Math.floor(Math.log(sqrtPrice / 2 ** 96) / Math.log(Math.sqrt(1.0001)));
+const sqrtPriceToTick = (sqrtPrice) => Math.log(sqrtPrice / 2 ** 96) / Math.log(Math.sqrt(1.0001));
 
 const tickToSqrtPrice = (tick: number) => (1.0001 ** (tick/2)) * 2**96
 
