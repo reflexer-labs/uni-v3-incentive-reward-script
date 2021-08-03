@@ -1,7 +1,7 @@
 import { fstat } from "node:fs";
 import { config } from "./config";
 import { getStakingWeight } from "./staking-weight";
-import { getPoolState, subgraphQuery, subgraphQueryPaginated } from "./subgraph";
+import { getPoolState, getRedemptionPriceFromBlock, subgraphQuery, subgraphQueryPaginated } from "./subgraph";
 import { LpPosition, UserList } from "./types";
 import { getExclusionList, getOrCreateUser, getSafeOwnerMapping } from "./utils";
 
@@ -36,10 +36,11 @@ export const getInitialState = async (startBlock: number, endBlock: number,  own
   }
 
   const poolState = await getPoolState(startBlock, config().UNISWAP_POOL_ADDRESS)
+  const redemptionPrice = await getRedemptionPriceFromBlock(startBlock)
 
   // Set the initial staking weights
   Object.values(users).map((u) => {
-    u.stakingWeight = getStakingWeight(u.debt, u.lpPositions, poolState.sqrtPrice);
+    u.stakingWeight = getStakingWeight(u.debt, u.lpPositions, poolState.sqrtPrice, redemptionPrice);
   });
 
   // Sanity checks
