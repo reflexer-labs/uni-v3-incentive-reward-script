@@ -46,7 +46,7 @@ const isInRange = (lp: LpPosition, sqrtPrice) => {
 
 const sqrtPriceToTick = (sqrtPrice) => Math.log(sqrtPrice / 2 ** 96) / Math.log(Math.sqrt(1.0001));
 
-const tickToSqrtPrice = (tick: number) => (1.0001 ** (tick/2)) * 2**96
+const tickToSqrtPrice = (tick: number) => (1.0001 ** (tick/2))
 
 const getAmount0Delta = (lowerTick: number, upperTick: number, liquidity: number) =>
   (liquidity / tickToSqrtPrice(lowerTick) - liquidity / tickToSqrtPrice(upperTick)) / 1e18;
