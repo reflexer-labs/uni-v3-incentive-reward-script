@@ -5,7 +5,7 @@ import { getOrCreateUser } from "./utils";
 import { provider } from "./chain";
 import { sanityCheckAllUsers } from "./sanity-checks";
 import { getStakingWeight } from "./staking-weight";
-import { getPoolState } from "./subgraph";
+import { getPoolState, getRedemptionPriceFromTimestamp } from "./subgraph";
 
 export const processRewardEvent = async (users: UserList, events: RewardEvent[]): Promise<UserList> => {
   // Starting and ending of the campaign
@@ -39,6 +39,9 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
   // Ongoing uni v3 sqrtPrice
   let sqrtPrice = (await getPoolState(startBlock, config().UNISWAP_POOL_ADDRESS)).sqrtPrice;
 
+  // Ongoing redemption price
+  let redemptionPrice: number;
+  let redemptionPriceLastUpdate = 0;
   // ===== Main processing loop ======
 
   console.log(
@@ -53,6 +56,12 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
     const event = events[i];
 
     if (i % 1000 === 0 && i > 0) console.log(`  Processed ${i} events`);
+
+    // Update the redemption price, only async task in this processing loop
+    if (redemptionPriceLastUpdate + 3600 * 24 <= event.timestamp) {
+      redemptionPrice = await getRedemptionPriceFromTimestamp(event.timestamp);
+      redemptionPriceLastUpdate = event.timestamp;
+    }
 
     updateRewardPerWeight(event.timestamp);
 
@@ -69,12 +78,12 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
         const adjustedDeltaDebt = (event.value as number) * accumulatedRate;
         user.debt += adjustedDeltaDebt;
 
-        // Ignore Dusty debt 
-        if(user.debt < 0 && user.debt > -0.4) {
-          user.debt = 0
+        // Ignore Dusty debt
+        if (user.debt < 0 && user.debt > -0.4) {
+          user.debt = 0;
         }
 
-        user.stakingWeight = getStakingWeight(user.debt, user.lpPositions, sqrtPrice);
+        user.stakingWeight = getStakingWeight(user.debt, user.lpPositions, sqrtPrice, redemptionPrice);
         break;
       }
       case RewardEventType.POOL_POSITION_UPDATE: {
@@ -89,8 +98,10 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
               console.log("ERC721 transfer");
               // We found the source address of an ERC721 transfer
               earn(users[u], rewardPerWeight);
-              users[u].lpPositions = users[u].lpPositions.filter(x => x.tokenId !== updatedPosition.tokenId);
-              users[u].stakingWeight = getStakingWeight(users[u].debt, users[u].lpPositions, sqrtPrice);
+              users[u].lpPositions = users[u].lpPositions.filter(
+                (x) => x.tokenId !== updatedPosition.tokenId
+              );
+              users[u].stakingWeight = getStakingWeight(users[u].debt, users[u].lpPositions, sqrtPrice, redemptionPrice);
             }
           }
         }
@@ -116,7 +127,7 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
         }
 
         // Update that user staking weight
-        user.stakingWeight = getStakingWeight(user.debt, user.lpPositions, sqrtPrice);
+        user.stakingWeight = getStakingWeight(user.debt, user.lpPositions, sqrtPrice, redemptionPrice);
 
         break;
       }
@@ -130,7 +141,7 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
 
         // Then update everyone weight
         Object.values(users).map(
-          (u) => (u.stakingWeight = getStakingWeight(u.debt, u.lpPositions, sqrtPrice))
+          (u) => (u.stakingWeight = getStakingWeight(u.debt, u.lpPositions, sqrtPrice, redemptionPrice))
         );
 
         break;
@@ -147,7 +158,7 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
         Object.values(users).map((u) => (u.debt *= rateMultiplier + 1));
 
         Object.values(users).map(
-          (u) => (u.stakingWeight = getStakingWeight(u.debt, u.lpPositions, sqrtPrice))
+          (u) => (u.stakingWeight = getStakingWeight(u.debt, u.lpPositions, sqrtPrice, redemptionPrice))
         );
         break;
       }

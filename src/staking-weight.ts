@@ -2,9 +2,17 @@ import { LpPosition, UserList } from "./types";
 
 const RAI_IS_TOKEN_0 = true;
 
-export const getStakingWeight = (debt: number, positions: LpPosition[], sqrtPrice: number): number => {
-  const totalLiquidity = positions.reduce((acc, p) => acc + (isInRange(p, sqrtPrice) ? p.liquidity : 0), 0);
-  const totalRaiLp = positions.reduce((acc, p) => acc + getActiveRaiFromLp(p, sqrtPrice), 0);
+export const getStakingWeight = (
+  debt: number,
+  positions: LpPosition[],
+  sqrtPrice: number,
+  redemptionPrice: number
+): number => {
+  const totalLiquidity = positions.reduce(
+    (acc, p) => acc + (isInRange(p, sqrtPrice, redemptionPrice) ? p.liquidity : 0),
+    0
+  );
+  const totalRaiLp = positions.reduce((acc, p) => acc + getActiveRaiFromLp(p, sqrtPrice, redemptionPrice), 0);
 
   // Discount your liquidity if you haven't minted the full amount
   if (debt >= totalRaiLp) {
@@ -14,8 +22,10 @@ export const getStakingWeight = (debt: number, positions: LpPosition[], sqrtPric
   }
 };
 
-export const getActiveRaiFromLp = (lp: LpPosition, sqrtPrice: number) =>
-  isInRange(lp, sqrtPrice) ? getTokenAmountsFromLp(lp, sqrtPrice)[RAI_IS_TOKEN_0 ? 0 : 1] : 0;
+export const getActiveRaiFromLp = (lp: LpPosition, sqrtPrice: number, redemptionPrice: number) =>
+  isInRange(lp, sqrtPrice, redemptionPrice)
+    ? getTokenAmountsFromLp(lp, sqrtPrice)[RAI_IS_TOKEN_0 ? 0 : 1]
+    : 0;  
 
 // == Uniswap v3 math wizardry ==
 export const getTokenAmountsFromLp = (lp: LpPosition, sqrtPrice: number) => {
@@ -39,17 +49,31 @@ export const getTokenAmountsFromLp = (lp: LpPosition, sqrtPrice: number) => {
   return [token0Amt, token1Amt];
 };
 
-const isInRange = (lp: LpPosition, sqrtPrice) => {
-  const tick = sqrtPriceToTick(sqrtPrice);
-  return tick >= lp.lowerTick && tick <= lp.upperTick;
+const isInRange = (lp: LpPosition, sqrtPrice, redemptionPrice: number) => {
+  const tickMarketPrice = sqrtPriceToTick(sqrtPrice);
+  const tickRedemptionPrice = sqrtPriceToAdjustedTick(priceToSqrtPrice(redemptionPrice));
+  return (
+    tickMarketPrice >= lp.lowerTick &&
+    tickMarketPrice <= lp.upperTick &&
+    tickRedemptionPrice >= lp.lowerTick &&
+    tickRedemptionPrice <= lp.upperTick
+  );
 };
 
 const sqrtPriceToTick = (sqrtPrice) => Math.log(sqrtPrice / 2 ** 96) / Math.log(Math.sqrt(1.0001));
 
-const tickToSqrtPrice = (tick: number) => (1.0001 ** (tick/2))
+const tickToSqrtPrice = (tick: number) => 1.0001 ** (tick / 2);
 
 const getAmount0Delta = (lowerTick: number, upperTick: number, liquidity: number) =>
   (liquidity / tickToSqrtPrice(lowerTick) - liquidity / tickToSqrtPrice(upperTick)) / 1e18;
 
 const getAmount1Delta = (lowerTick: number, upperTick: number, liquidity: number) =>
   (liquidity * (tickToSqrtPrice(upperTick) - tickToSqrtPrice(lowerTick))) / 1e18;
+
+const sqrtPriceToAdjustedTick = (sqrtPrice: number, tickSpacing = 10) => {
+  const flooredTick = Math.floor(sqrtPriceToTick(sqrtPrice));
+  return flooredTick - (flooredTick % tickSpacing);
+};
+
+const priceToSqrtPrice = (price: number, token0Decimal = 18, token1Decimal = 18) =>
+  Math.sqrt(((price * 10 ** token1Decimal) / 10 ** token0Decimal) * 2 ** 192);

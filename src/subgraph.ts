@@ -61,3 +61,35 @@ export const getPoolState = async (block: number, pool: string) => {
 
   return resp.pool
 };
+
+export const getRedemptionPriceFromBlock = async (block: number) => {
+  return Number(
+    (
+      await subgraphQuery(
+        `{
+          systemState(id: "current", block: {number: ${block}}) {
+            currentRedemptionPrice {
+              value
+            }
+          }
+        }`,
+        config().GEB_SUBGRAPH_URL
+      )
+    ).systemState.currentRedemptionPrice.value
+  );
+};
+
+export const getRedemptionPriceFromTimestamp = async (timestamp: number) => {
+  return Number(
+    (
+      await subgraphQuery(
+        `{ 
+          redemptionPrices(orderBy: timestamp, orderDirection: desc, first: 1, where: {timestamp_lte: ${timestamp}}) {
+            value
+          }
+        }`,
+        config().GEB_SUBGRAPH_URL
+      )
+    ).redemptionPrices[0].value
+  );
+};
