@@ -4,7 +4,7 @@ import { LpPosition, RewardEvent, RewardEventType, UserAccount, UserList } from 
 import { getOrCreateUser } from "./utils";
 import { provider } from "./chain";
 import { sanityCheckAllUsers } from "./sanity-checks";
-import { getStakingWeight } from "./staking-weight";
+import { getStakingWeight, getTokenAmountsFromLp } from "./staking-weight";
 import { getPoolState, getRedemptionPriceFromTimestamp } from "./subgraph";
 
 export const processRewardEvent = async (users: UserList, events: RewardEvent[]): Promise<UserList> => {
@@ -101,7 +101,12 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
               users[u].lpPositions = users[u].lpPositions.filter(
                 (x) => x.tokenId !== updatedPosition.tokenId
               );
-              users[u].stakingWeight = getStakingWeight(users[u].debt, users[u].lpPositions, sqrtPrice, redemptionPrice);
+              users[u].stakingWeight = getStakingWeight(
+                users[u].debt,
+                users[u].lpPositions,
+                sqrtPrice,
+                redemptionPrice
+              );
             }
           }
         }
@@ -180,6 +185,40 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
   updateRewardPerWeight(endTimestamp);
   Object.values(users).map((u) => earn(u, rewardPerWeight));
 
+  const entries = Object.entries(users);
+  const positionsToRebalance = entries.filter(
+    (e) =>
+      e[1].debt > 0 &&
+      e[1].lpPositions.length > 0 &&
+      e[1].lpPositions.some((f) => f.liquidity > 0) &&
+      e[1].stakingWeight < 1
+  );
+
+  const positions = entries
+    .filter((e) => e[1].stakingWeight > 0)
+    .map((p) => [
+      p[0],
+      p[1].debt,
+      p[1].lpPositions
+        .filter((x) => x.liquidity > 0)
+        .map((x) => getTokenAmountsFromLp(x, sqrtPrice)[0])
+        .reduce((x, acc) => acc + x, 0),
+      p[1].lpPositions
+        .filter((x) => x.liquidity > 0)
+        .map((x) => getTokenAmountsFromLp(x, sqrtPrice)[1])
+        .reduce((x, acc) => acc + x, 0),
+    ])
+    //@ts-ignore
+    .map(x => [...x, x[2] + x[3] / 3.04])
+    .map(x => [...x, x[1]/x[4]])
+    //@ts-ignore
+    .sort((a, b) => b[1] - a[1])
+    //@ts-ignore
+    // .filter(f => f[1] < (f[2] + f[3] / 3.04))
+    // .map(a => a.join(","))
+    // .join("\n");
+    const avg = positions.reduce((a, acc) => a + acc[5] * acc[4], 0) / positions.reduce((a, acc) => a + acc[4], 0)
+  console.log(avg);
   return users;
 };
 
