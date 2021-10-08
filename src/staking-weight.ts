@@ -12,20 +12,32 @@ export const getStakingWeight = (
     (acc, p) => acc + (isInRange(p, sqrtPrice, redemptionPrice) ? p.liquidity : 0),
     0
   );
-  const totalRaiLp = positions.reduce((acc, p) => acc + getActiveRaiFromLp(p, sqrtPrice, redemptionPrice), 0);
+  const totalLpPositionSize = positions.reduce(
+    (acc, p) => acc + getPositionSize(p, sqrtPrice, redemptionPrice),
+    0
+  );
 
   // Discount your liquidity if you haven't minted the full amount
-  if (debt >= totalRaiLp) {
+  if (debt >= totalLpPositionSize) {
     return totalLiquidity;
   } else {
-    return (debt / totalRaiLp) * totalLiquidity;
+    return (debt / totalLpPositionSize) * totalLiquidity;
   }
 };
 
-export const getActiveRaiFromLp = (lp: LpPosition, sqrtPrice: number, redemptionPrice: number) =>
-  isInRange(lp, sqrtPrice, redemptionPrice)
-    ? getTokenAmountsFromLp(lp, sqrtPrice)[RAI_IS_TOKEN_0 ? 0 : 1]
-    : 0;  
+export const getPositionSize = (lp: LpPosition, sqrtPrice: number, redemptionPrice: number) => {
+  if (!isInRange(lp, sqrtPrice, redemptionPrice)) {
+    return 0;
+  } else {
+    const tokenAmounts = getTokenAmountsFromLp(lp, sqrtPrice);
+    const [raiAMount, daiAmount] = RAI_IS_TOKEN_0
+      ? [tokenAmounts[0], tokenAmounts[1]]
+      : [tokenAmounts[1], tokenAmounts[0]];
+
+    const raiValue = sqrtPriceToPrice(sqrtPrice) * raiAMount;
+    return daiAmount + raiValue;
+  }
+};
 
 // == Uniswap v3 math wizardry ==
 export const getTokenAmountsFromLp = (lp: LpPosition, sqrtPrice: number) => {
@@ -77,3 +89,6 @@ const sqrtPriceToAdjustedTick = (sqrtPrice: number, tickSpacing = 10) => {
 
 const priceToSqrtPrice = (price: number, token0Decimal = 18, token1Decimal = 18) =>
   Math.sqrt(((price * 10 ** token1Decimal) / 10 ** token0Decimal) * 2 ** 192);
+
+const sqrtPriceToPrice = (price: number, token0Decimal = 18, token1Decimal = 18) =>
+  (price ** 2 * (10 ** token0Decimal / 10 ** token1Decimal)) / 2 ** 192;
