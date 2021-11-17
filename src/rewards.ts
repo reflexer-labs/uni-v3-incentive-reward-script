@@ -4,8 +4,9 @@ import { LpPosition, RewardEvent, RewardEventType, UserAccount, UserList } from 
 import { getOrCreateUser } from "./utils";
 import { provider } from "./chain";
 import { sanityCheckAllUsers } from "./sanity-checks";
-import { getStakingWeight } from "./staking-weight";
+import { getPositionSize, getStakingWeight } from "./staking-weight";
 import { getPoolState, getRedemptionPriceFromTimestamp } from "./subgraph";
+import * as fs from 'fs';
 
 export const processRewardEvent = async (users: UserList, events: RewardEvent[]): Promise<UserList> => {
   // Starting and ending of the campaign
@@ -168,6 +169,14 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
 
     sanityCheckAllUsers(users, event);
 
+    // Individual user check, uncomment to create a report
+    // const u = "0x00000...".toLowerCase()
+    // earn(users[u], rewardPerWeight)
+    // fs.appendFileSync("user.csv",`${new Date(timestamp * 1000).toISOString()}${users[u].debt},${users[u].lpPositions.reduce(
+    //   (acc, p) => acc + getPositionSize(p, sqrtPrice, redemptionPrice),
+    //   0
+    // )},${users[u].stakingWeight},${totalStakingWeight},${users[u].earned}\n`)
+
     // Recalculate the sum of weights since the events the weights
     totalStakingWeight = sumAllWeights(users);
 
@@ -180,6 +189,7 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
   updateRewardPerWeight(endTimestamp);
   Object.values(users).map((u) => earn(u, rewardPerWeight));
 
+  
   return users;
 };
 
