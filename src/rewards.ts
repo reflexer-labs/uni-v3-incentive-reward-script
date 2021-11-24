@@ -172,7 +172,7 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
     // Individual user check, uncomment to create a report
     // const u = "0x00000...".toLowerCase()
     // earn(users[u], rewardPerWeight)
-    // fs.appendFileSync("user.csv",`${new Date(timestamp * 1000).toISOString()}${users[u].debt},${users[u].lpPositions.reduce(
+    // fs.appendFileSync("user.csv",`${new Date(timestamp * 1000).toISOString()},${users[u].debt},${users[u].lpPositions.reduce(
     //   (acc, p) => acc + getPositionSize(p, sqrtPrice, redemptionPrice),
     //   0
     // )},${users[u].stakingWeight},${totalStakingWeight},${users[u].earned}\n`)
