@@ -1,6 +1,7 @@
 import { LpPosition, UserList } from "./types";
 
 const RAI_IS_TOKEN_0 = true;
+const MINIMUM_TICK_WIDTH = 50;
 
 export const getStakingWeight = (
   debt: number,
@@ -8,11 +9,14 @@ export const getStakingWeight = (
   sqrtPrice: number,
   redemptionPrice: number
 ): number => {
-  const totalLiquidity = positions.reduce(
+  // Remove positions that are narrower than the smallest allowed range
+  const filteredPositions = positions.filter((p) => p.upperTick - p.lowerTick >= MINIMUM_TICK_WIDTH);
+
+  const totalLiquidity = filteredPositions.reduce(
     (acc, p) => acc + (isInRange(p, sqrtPrice, redemptionPrice) ? p.liquidity : 0),
     0
   );
-  const totalLpPositionSize = positions.reduce(
+  const totalLpPositionSize = filteredPositions.reduce(
     (acc, p) => acc + getPositionSize(p, sqrtPrice, redemptionPrice),
     0
   );
