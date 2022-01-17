@@ -20,6 +20,8 @@ export const getStakingWeight = (
   // Discount your liquidity if you haven't minted the full amount
   if (debt >= totalLpPositionSize) {
     return totalLiquidity;
+  } else if (totalLpPositionSize <= 0) {
+    return 0;
   } else {
     return (debt / totalLpPositionSize) * totalLiquidity;
   }
