@@ -22,8 +22,6 @@ export const getEvents = async (
   // Merge all events
   let events = res.reduce((a, b) => a.concat(b), []);
 
-  console.log("events.length, ", events.length);
-
   // Filter out events involving the exclusion list
   // Remove accounts from the exclusion list
   const exclusionList = await getExclusionList();

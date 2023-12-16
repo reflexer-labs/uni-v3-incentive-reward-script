@@ -61,7 +61,6 @@ export const getInitialState = async (
       poolState.sqrtPrice,
       redemptionPrice
     );
-    // console.log("u.stakingWeight", u.stakingWeight);
   });
 
   // Sanity checks

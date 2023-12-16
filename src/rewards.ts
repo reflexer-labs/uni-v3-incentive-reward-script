@@ -238,7 +238,6 @@ export const processRewardEvent = async (
 
 // Credit reward to a user
 const earn = (user: UserAccount, rewardPerWeight: number) => {
-  console.log("user.stakingWeight;", user.stakingWeight);
   // Credit to the user his due rewards
   user.earned +=
     (rewardPerWeight - user.rewardPerWeightStored) * user.stakingWeight;
@@ -249,9 +248,7 @@ const earn = (user: UserAccount, rewardPerWeight: number) => {
 
 // Simply sum all the stakingWeight of all users
 const sumAllWeights = (users: UserList) => {
-  console.log("users", users);
   return Object.values(users).reduce((acc, user) => {
-    console.log("user.stakingWeight;", user.stakingWeight);
     return acc + user.stakingWeight;
   }, 0);
 };
