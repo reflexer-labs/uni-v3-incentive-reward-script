@@ -14,12 +14,12 @@ export const getOrCreateUser = (
   if (userList[address]) {
     return userList[address];
   } else {
-    const newUser : UserAccount  = {
+    const newUser: UserAccount = {
       debt: 0,
       lpPositions: [],
       stakingWeight: 0,
       earned: 0,
-      rewardPerWeightStored: 0,
+      rewardPerWeightStored: 0
     };
     userList[address] = newUser;
     return newUser;
@@ -31,13 +31,13 @@ export const roundToZero = (num: number) => (Math.abs(num) < 1e-8 ? 0 : num);
 // Export results in a CSV file
 export const exportResults = (users: UserList) => {
   // Export results in an array
-  let userReward: [string, number][] = Object.entries(users).map((kv) => [
+  let userReward: [string, number][] = Object.entries(users).map(kv => [
     kv[0],
-    kv[1].earned,
+    kv[1].earned
   ]);
 
   // Remove users with 0 rewards
-  userReward = userReward.filter((x) => x[1] > 0);
+  userReward = userReward.filter(x => x[1] > 0);
 
   // Sort by decreasing reward
   userReward = userReward.sort((a, b) =>
@@ -54,7 +54,7 @@ export const exportResults = (users: UserList) => {
 
 export const getExclusionList = async () => {
   const f = await fs.readFileSync("exclusion-list.csv", "utf-8");
-  return f.split("\n").filter((x) => x !== "");
+  return f.split("\n").filter(x => x !== "");
 };
 
 export const getSafeOwnerMapping = async (block: number) => {

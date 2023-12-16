@@ -5,6 +5,7 @@
   "main": "src/index.ts",
   "scripts": {
     "start": "ts-node src/main.ts",
+    "new-pool": "ts-node src/main-new-pool.ts",
     "test": "mocha -r ts-node/register src/tests/**/*.test.ts"
   },
   "author": "Guillaume Felley",

@@ -1,10 +1,23 @@
 import { config } from "./config";
 import { getStakingWeight } from "./staking-weight";
-import { getPoolState, getRedemptionPriceFromBlock, subgraphQuery, subgraphQueryPaginated } from "./subgraph";
+import {
+  getPoolState,
+  getRedemptionPriceFromBlock,
+  subgraphQuery,
+  subgraphQueryPaginated
+} from "./subgraph";
 import { LpPosition, UserList } from "./types";
-import { getExclusionList, getOrCreateUser, getSafeOwnerMapping } from "./utils";
+import {
+  getExclusionList,
+  getOrCreateUser,
+  getSafeOwnerMapping
+} from "./utils";
 
-export const getInitialState = async (startBlock: number, endBlock: number, owners: Map<string, string>) => {
+export const getInitialState = async (
+  startBlock: number,
+  endBlock: number,
+  owners: Map<string, string>
+) => {
   console.log("Fetch initial state...");
 
   // Get all LP token balance
@@ -34,12 +47,21 @@ export const getInitialState = async (startBlock: number, endBlock: number, owne
     delete users[e];
   }
 
-  const poolState = await getPoolState(startBlock, config().UNISWAP_POOL_ADDRESS);
+  const poolState = await getPoolState(
+    startBlock,
+    config().UNISWAP_POOL_ADDRESS
+  );
   const redemptionPrice = await getRedemptionPriceFromBlock(startBlock);
 
   // Set the initial staking weights
-  Object.values(users).map((u) => {
-    u.stakingWeight = getStakingWeight(u.debt, u.lpPositions, poolState.sqrtPrice, redemptionPrice);
+  Object.values(users).map(u => {
+    u.stakingWeight = getStakingWeight(
+      u.debt,
+      u.lpPositions,
+      poolState.sqrtPrice,
+      redemptionPrice
+    );
+    // console.log("u.stakingWeight", u.stakingWeight);
   });
 
   // Sanity checks
@@ -55,16 +77,25 @@ export const getInitialState = async (startBlock: number, endBlock: number, owne
     }
   }
 
-  console.log(`Finished loading initial state for ${Object.keys(users).length} users`);
+  console.log(
+    `Finished loading initial state for ${Object.keys(users).length} users`
+  );
   return users;
 };
 
-const getInitialSafesDebt = async (startBlock: number, ownerMapping: Map<string, string>) => {
+const getInitialSafesDebt = async (
+  startBlock: number,
+  ownerMapping: Map<string, string>
+) => {
   const debtQuery = `{safes(where: {debt_gt: 0}, first: 1000, skip: [[skip]],block: {number:${startBlock}}) {debt, safeHandler}}`;
   const debtsGraph: {
     debt: number;
     safeHandler: string;
-  }[] = await subgraphQueryPaginated(debtQuery, "safes", config().GEB_SUBGRAPH_URL);
+  }[] = await subgraphQueryPaginated(
+    debtQuery,
+    "safes",
+    config().GEB_SUBGRAPH_URL
+  );
 
   // We need the adjusted debt after accumulated rate for the initial state
   const accumulatedRate = await getAccumulatedRate(startBlock);
@@ -78,7 +109,7 @@ const getInitialSafesDebt = async (startBlock: number, ownerMapping: Map<string,
 
     debts.push({
       address: ownerMapping.get(u.safeHandler),
-      debt: Number(u.debt) * accumulatedRate,
+      debt: Number(u.debt) * accumulatedRate
     });
   }
 
@@ -123,7 +154,11 @@ const getInitialLpPosition = async (startBlock: number) => {
     tickUpper: {
       tickIdx: string;
     };
-  }[] = await subgraphQueryPaginated(query, "positions", config().UNISWAP_SUBGRAPH_URL);
+  }[] = await subgraphQueryPaginated(
+    query,
+    "positions",
+    config().UNISWAP_SUBGRAPH_URL
+  );
 
   console.log(`  Fetched ${positions.length} LP position`);
 
@@ -133,7 +168,7 @@ const getInitialLpPosition = async (startBlock: number) => {
         lowerTick: parseInt(p.tickLower.tickIdx),
         upperTick: parseInt(p.tickUpper.tickIdx),
         liquidity: parseInt(p.liquidity),
-        tokenId: parseInt(p.id),
+        tokenId: parseInt(p.id)
       });
     } else {
       acc[p.owner] = {
@@ -142,9 +177,9 @@ const getInitialLpPosition = async (startBlock: number) => {
             lowerTick: parseInt(p.tickLower.tickIdx),
             upperTick: parseInt(p.tickUpper.tickIdx),
             liquidity: parseInt(p.liquidity),
-            tokenId: parseInt(p.id),
-          },
-        ],
+            tokenId: parseInt(p.id)
+          }
+        ]
       };
     }
     return acc;
