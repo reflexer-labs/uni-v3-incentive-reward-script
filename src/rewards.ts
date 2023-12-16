@@ -28,14 +28,8 @@ export const processRewardEvent = async (
   // Constant amount of reward distributed per second
   const rewardRate = config().REWARD_AMOUNT / (endTimestamp - startTimestamp);
 
-  console.log("rewardRate", rewardRate);
-
-  console.log(config());
-
   // // Ongoing Total supply of weight
   let totalStakingWeight = sumAllWeights(users);
-
-  console.log("totalStakingWeight", totalStakingWeight);
 
   // // Ongoing cumulative reward per weight over time
   let rewardPerWeight = 0;
