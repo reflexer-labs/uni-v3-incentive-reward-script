@@ -1,14 +1,23 @@
 import { config } from "./config";
 import { getAccumulatedRate } from "./initial-state";
-import { LpPosition, RewardEvent, RewardEventType, UserAccount, UserList } from "./types";
+import {
+  LpPosition,
+  RewardEvent,
+  RewardEventType,
+  UserAccount,
+  UserList
+} from "./types";
 import { getOrCreateUser } from "./utils";
 import { provider } from "./chain";
 import { sanityCheckAllUsers } from "./sanity-checks";
-import { getPositionSize, getStakingWeight } from "./staking-weight";
+import { getStakingWeight } from "./staking-weight";
 import { getPoolState, getRedemptionPriceFromTimestamp } from "./subgraph";
-import * as fs from 'fs';
+import * as fs from "fs";
 
-export const processRewardEvent = async (users: UserList, events: RewardEvent[]): Promise<UserList> => {
+export const processRewardEvent = async (
+  users: UserList,
+  events: RewardEvent[]
+): Promise<UserList> => {
   // Starting and ending of the campaign
   const startBlock = config().START_BLOCK;
   const endBlock = config().END_BLOCK;
@@ -21,10 +30,12 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
   // Ongoing Total supply of weight
   let totalStakingWeight = sumAllWeights(users);
 
+  console.log(`Total staking weight: ${totalStakingWeight}`);
+
   // Ongoing cumulative reward per weight over time
   let rewardPerWeight = 0;
 
-  let updateRewardPerWeight = (evtTime) => {
+  let updateRewardPerWeight = evtTime => {
     if (totalStakingWeight > 0) {
       const deltaTime = evtTime - timestamp;
       rewardPerWeight += (deltaTime * rewardRate) / totalStakingWeight;
@@ -38,7 +49,9 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
   let accumulatedRate = await getAccumulatedRate(startBlock);
 
   // Ongoing uni v3 sqrtPrice
-  let sqrtPrice = (await getPoolState(startBlock, config().UNISWAP_POOL_ADDRESS)).sqrtPrice;
+  let sqrtPrice = (
+    await getPoolState(startBlock, config().UNISWAP_POOL_ADDRESS)
+  ).sqrtPrice;
 
   // Ongoing redemption price
   let redemptionPrice: number;
@@ -84,7 +97,12 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
           user.debt = 0;
         }
 
-        user.stakingWeight = getStakingWeight(user.debt, user.lpPositions, sqrtPrice, redemptionPrice);
+        user.stakingWeight = getStakingWeight(
+          user.debt,
+          user.lpPositions,
+          sqrtPrice,
+          redemptionPrice
+        );
         break;
       }
       case RewardEventType.POOL_POSITION_UPDATE: {
@@ -95,25 +113,35 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
         // Detect the special of a simple NFT transfer (not form a mint/burn/modify position)
         for (let u of Object.keys(users)) {
           for (let p in users[u].lpPositions) {
-            if (users[u].lpPositions[p].tokenId === updatedPosition.tokenId && u !== event.address) {
+            if (
+              users[u].lpPositions[p].tokenId === updatedPosition.tokenId &&
+              u !== event.address
+            ) {
               console.log("ERC721 transfer");
               // We found the source address of an ERC721 transfer
               earn(users[u], rewardPerWeight);
               users[u].lpPositions = users[u].lpPositions.filter(
-                (x) => x.tokenId !== updatedPosition.tokenId
+                x => x.tokenId !== updatedPosition.tokenId
               );
-              users[u].stakingWeight = getStakingWeight(users[u].debt, users[u].lpPositions, sqrtPrice, redemptionPrice);
+              users[u].stakingWeight = getStakingWeight(
+                users[u].debt,
+                users[u].lpPositions,
+                sqrtPrice,
+                redemptionPrice
+              );
             }
           }
         }
         // Create or update the position
-        const index = user.lpPositions.findIndex((p) => p.tokenId === updatedPosition.tokenId);
+        const index = user.lpPositions.findIndex(
+          p => p.tokenId === updatedPosition.tokenId
+        );
         if (index === -1) {
           user.lpPositions.push({
             tokenId: updatedPosition.tokenId,
             lowerTick: updatedPosition.lowerTick,
             upperTick: updatedPosition.upperTick,
-            liquidity: updatedPosition.liquidity,
+            liquidity: updatedPosition.liquidity
           });
         } else {
           user.lpPositions[index].liquidity = updatedPosition.liquidity;
@@ -128,7 +156,12 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
         }
 
         // Update that user staking weight
-        user.stakingWeight = getStakingWeight(user.debt, user.lpPositions, sqrtPrice, redemptionPrice);
+        user.stakingWeight = getStakingWeight(
+          user.debt,
+          user.lpPositions,
+          sqrtPrice,
+          redemptionPrice
+        );
 
         break;
       }
@@ -136,13 +169,19 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
         // Pool swap changes the price which affects everyone's staking weight
 
         // First credit all users
-        Object.values(users).map((u) => earn(u, rewardPerWeight));
+        Object.values(users).map(u => earn(u, rewardPerWeight));
 
         sqrtPrice = event.value as number;
 
         // Then update everyone weight
         Object.values(users).map(
-          (u) => (u.stakingWeight = getStakingWeight(u.debt, u.lpPositions, sqrtPrice, redemptionPrice))
+          u =>
+            (u.stakingWeight = getStakingWeight(
+              u.debt,
+              u.lpPositions,
+              sqrtPrice,
+              redemptionPrice
+            ))
         );
 
         break;
@@ -153,13 +192,19 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
         accumulatedRate += rateMultiplier;
 
         // First credit all users
-        Object.values(users).map((u) => earn(u, rewardPerWeight));
+        Object.values(users).map(u => earn(u, rewardPerWeight));
 
         // Update everyone's debt
-        Object.values(users).map((u) => (u.debt *= rateMultiplier + 1));
+        Object.values(users).map(u => (u.debt *= rateMultiplier + 1));
 
         Object.values(users).map(
-          (u) => (u.stakingWeight = getStakingWeight(u.debt, u.lpPositions, sqrtPrice, redemptionPrice))
+          u =>
+            (u.stakingWeight = getStakingWeight(
+              u.debt,
+              u.lpPositions,
+              sqrtPrice,
+              redemptionPrice
+            ))
         );
         break;
       }
@@ -179,24 +224,20 @@ export const processRewardEvent = async (users: UserList, events: RewardEvent[])
 
     // Recalculate the sum of weights since the events the weights
     totalStakingWeight = sumAllWeights(users);
-
-    if (totalStakingWeight === 0) {
-      console.log(`Zero weight at event ${i} time ${event.timestamp}`);
-    }
   }
 
   // Final crediting of all rewards
   updateRewardPerWeight(endTimestamp);
-  Object.values(users).map((u) => earn(u, rewardPerWeight));
+  Object.values(users).map(u => earn(u, rewardPerWeight));
 
-  
   return users;
 };
 
 // Credit reward to a user
 const earn = (user: UserAccount, rewardPerWeight: number) => {
   // Credit to the user his due rewards
-  user.earned += (rewardPerWeight - user.rewardPerWeightStored) * user.stakingWeight;
+  user.earned +=
+    (rewardPerWeight - user.rewardPerWeightStored) * user.stakingWeight;
 
   // Store his cumulative credited rewards for next time
   user.rewardPerWeightStored = rewardPerWeight;

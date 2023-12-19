@@ -3,35 +3,33 @@ import { LpPosition, UserList } from "./types";
 const RAI_IS_TOKEN_0 = true;
 const MINIMUM_TICK_WIDTH = 50;
 
+const fullRangeLowerTick = -887270;
+const fullRangeUpperTick = 887270;
+
 export const getStakingWeight = (
   debt: number,
   positions: LpPosition[],
   sqrtPrice: number,
   redemptionPrice: number
 ): number => {
-  // Remove positions that are narrower than the smallest allowed range
-  const filteredPositions = positions.filter((p) => p.upperTick - p.lowerTick >= MINIMUM_TICK_WIDTH);
+  // Remove positions that are not full range
+  const filteredPositions = positions.filter(p => {
+    return (
+      p.lowerTick === fullRangeLowerTick && p.upperTick === fullRangeUpperTick
+    );
+  });
 
-  const totalLiquidity = filteredPositions.reduce(
-    (acc, p) => acc + (isInRange(p, sqrtPrice, redemptionPrice) ? p.liquidity : 0),
-    0
-  );
-  const totalLpPositionSize = filteredPositions.reduce(
-    (acc, p) => acc + getPositionSize(p, sqrtPrice, redemptionPrice),
-    0
-  );
-
-  // Discount your liquidity if you haven't minted the full amount
-  if (debt >= totalLpPositionSize) {
-    return totalLiquidity;
-  } else if (totalLpPositionSize <= 0) {
-    return 0;
-  } else {
-    return (debt / totalLpPositionSize) * totalLiquidity;
-  }
+  const totalLiquidity = filteredPositions.reduce((acc, p) => {
+    return acc + (isFullRange(p) ? p.liquidity : 0);
+  }, 0);
+  return totalLiquidity;
 };
 
-export const getPositionSize = (lp: LpPosition, sqrtPrice: number, redemptionPrice: number) => {
+export const getPositionSize = (
+  lp: LpPosition,
+  sqrtPrice: number,
+  redemptionPrice: number
+) => {
   if (!isInRange(lp, sqrtPrice, redemptionPrice)) {
     return 0;
   } else {
@@ -69,7 +67,9 @@ export const getTokenAmountsFromLp = (lp: LpPosition, sqrtPrice: number) => {
 
 const isInRange = (lp: LpPosition, sqrtPrice, redemptionPrice: number) => {
   const tickMarketPrice = sqrtPriceToTick(sqrtPrice);
-  const tickRedemptionPrice = sqrtPriceToAdjustedTick(priceToSqrtPrice(redemptionPrice));
+  const tickRedemptionPrice = sqrtPriceToAdjustedTick(
+    priceToSqrtPrice(redemptionPrice)
+  );
   return (
     tickMarketPrice >= lp.lowerTick &&
     tickMarketPrice <= lp.upperTick &&
@@ -78,23 +78,45 @@ const isInRange = (lp: LpPosition, sqrtPrice, redemptionPrice: number) => {
   );
 };
 
-const sqrtPriceToTick = (sqrtPrice) => Math.log(sqrtPrice / 2 ** 96) / Math.log(Math.sqrt(1.0001));
+const isFullRange = (lp: LpPosition) =>
+  lp.lowerTick === fullRangeLowerTick && lp.upperTick === fullRangeUpperTick;
+
+const sqrtPriceToTick = sqrtPrice =>
+  Math.log(sqrtPrice / 2 ** 96) / Math.log(Math.sqrt(1.0001));
 
 const tickToSqrtPrice = (tick: number) => 1.0001 ** (tick / 2);
 
-const getAmount0Delta = (lowerTick: number, upperTick: number, liquidity: number) =>
-  (liquidity / tickToSqrtPrice(lowerTick) - liquidity / tickToSqrtPrice(upperTick)) / 1e18;
+const getAmount0Delta = (
+  lowerTick: number,
+  upperTick: number,
+  liquidity: number
+) =>
+  (liquidity / tickToSqrtPrice(lowerTick) -
+    liquidity / tickToSqrtPrice(upperTick)) /
+  1e18;
 
-const getAmount1Delta = (lowerTick: number, upperTick: number, liquidity: number) =>
-  (liquidity * (tickToSqrtPrice(upperTick) - tickToSqrtPrice(lowerTick))) / 1e18;
+const getAmount1Delta = (
+  lowerTick: number,
+  upperTick: number,
+  liquidity: number
+) =>
+  (liquidity * (tickToSqrtPrice(upperTick) - tickToSqrtPrice(lowerTick))) /
+  1e18;
 
 const sqrtPriceToAdjustedTick = (sqrtPrice: number, tickSpacing = 10) => {
   const flooredTick = Math.floor(sqrtPriceToTick(sqrtPrice));
   return flooredTick - (flooredTick % tickSpacing);
 };
 
-const priceToSqrtPrice = (price: number, token0Decimal = 18, token1Decimal = 18) =>
+const priceToSqrtPrice = (
+  price: number,
+  token0Decimal = 18,
+  token1Decimal = 18
+) =>
   Math.sqrt(((price * 10 ** token1Decimal) / 10 ** token0Decimal) * 2 ** 192);
 
-const sqrtPriceToPrice = (price: number, token0Decimal = 18, token1Decimal = 18) =>
-  (price ** 2 * (10 ** token0Decimal / 10 ** token1Decimal)) / 2 ** 192;
+const sqrtPriceToPrice = (
+  price: number,
+  token0Decimal = 18,
+  token1Decimal = 18
+) => (price ** 2 * (10 ** token0Decimal / 10 ** token1Decimal)) / 2 ** 192;
